@@ -122,6 +122,10 @@ TYPE = "type"
 AGE = "age"
 INTENSITY = "intensity"
 FIRE = "fire"
+FLOOD = "flood"
+DEBRIS = "debris"
+FLOOD = "flood"
+DEBRIS = "debris"
 
 if HEADLESS:
     screen = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
@@ -977,6 +981,56 @@ class Disasters:
         if (row, col) not in self.hazards:
             self.hazards[(row, col)] = {TYPE: FIRE, AGE: 0, INTENSITY: 1.0}
 
+    def add_flood(self, row, col):
+        self.hazards[(row, col)] = {TYPE: FLOOD, AGE: 0, INTENSITY: 1.0}
+
+    def add_debris(self, row, col):
+        self.hazards[(row, col)] = {TYPE: DEBRIS, AGE: 0, INTENSITY: 1.0}
+
+    def add_bomb(self, row, col):
+        # Immediate explosion -> ignite a small cluster
+        for dr in range(-2, 3):
+            for dc in range(-2, 3):
+                nr, nc = row + dr, col + dc
+                if 0 <= nr < ROWS and 0 <= nc < COLS:
+                    if abs(dr) + abs(dc) <= 2:
+                        self.add_fire(nr, nc)
+
+    def trigger_quake(self, row, col, radius=4):
+        # Add debris ring and shake
+        for dr in range(-radius, radius + 1):
+            for dc in range(-radius, radius + 1):
+                nr, nc = row + dr, col + dc
+                if 0 <= nr < ROWS and 0 <= nc < COLS:
+                    if abs(dr) + abs(dc) >= radius - 1:
+                        self.add_debris(nr, nc)
+        self.shake = max(self.shake, 3.0)
+
+    def add_flood(self, row, col):
+        self.hazards[(row, col)] = {TYPE: FLOOD, AGE: 0, INTENSITY: 1.0}
+
+    def add_debris(self, row, col):
+        self.hazards[(row, col)] = {TYPE: DEBRIS, AGE: 0, INTENSITY: 1.0}
+
+    def add_bomb(self, row, col):
+        # Immediate explosion: add fires in a small radius
+        for dr in range(-2, 3):
+            for dc in range(-2, 3):
+                nr, nc = row + dr, col + dc
+                if 0 <= nr < ROWS and 0 <= nc < COLS:
+                    if abs(dr) + abs(dc) <= 2:
+                        self.add_fire(nr, nc)
+
+    def trigger_quake(self, row, col, radius=4):
+        # Increase shake and add debris in a ring
+        self.shake = max(self.shake, 3.0)
+        for dr in range(-radius, radius + 1):
+            for dc in range(-radius, radius + 1):
+                nr, nc = row + dr, col + dc
+                if 0 <= nr < ROWS and 0 <= nc < COLS:
+                    if abs(dr) + abs(dc) >= radius - 1:
+                        self.add_debris(nr, nc)
+
     def update(self, dt, maze, neural_aco):
         self.shake *= 0.9
         if self.shake > 0.01:
@@ -1030,6 +1084,20 @@ class Disasters:
 
                 if info[AGE] > 80:
                     to_remove.append((row, col))
+
+            elif info[TYPE] == FLOOD:
+                # Suppress nearby fires
+                for fr in range(row - 1, row + 2):
+                    for fc in range(col - 1, col + 2):
+                        if (fr, fc) in self.hazards and self.hazards[(fr, fc)].get(TYPE) == FIRE:
+                            self.hazards[(fr, fc)][INTENSITY] *= 0.5
+                # Flood dissipates
+                if info[AGE] > 15:
+                    to_remove.append((row, col))
+
+            elif info[TYPE] == DEBRIS:
+                # Persist; no action needed
+                pass
 
         for pos in to_remove:
             if pos in self.hazards:
@@ -1312,10 +1380,19 @@ class Person:
         if not self.alive or self.escaped:
             return
 
-        # Damage
+        # Hazard effects
         if (self.row, self.col) in hazards:
-            self.health -= 30 * dt
-            self.state = STATE_PANICKING
+            hinfo = hazards[(self.row, self.col)]
+            htype = hinfo.get(TYPE, FIRE)
+            if htype == FIRE:
+                self.health -= 30 * dt
+                self.state = STATE_PANICKING
+            elif htype == FLOOD:
+                self.health -= 6 * dt
+                self.state = STATE_PANICKING
+            elif htype == DEBRIS:
+                # Debris blocks; no direct damage
+                self.state = STATE_PANICKING
 
         smoke_level = smoke.get((self.row, self.col), 0)
         if smoke_level > 0.5:
@@ -2111,7 +2188,13 @@ def run_headless_simulation(steps=240, dt=1 / 30.0, full_state=False):
 
     # Full snapshot for frontend integration
     hazards_list = [
-        {'row': r, 'col': c, 'type': info.get(TYPE, FIRE), 'intensity': info.get(INTENSITY, 1.0)}
+        {
+            'row': r,
+            'col': c,
+            'type': info.get(TYPE, FIRE),
+            'intensity': info.get(INTENSITY, 1.0),
+            'age': info.get(AGE, 0.0),
+        }
         for (r, c), info in disasters.hazards.items()
     ]
     smoke_dict = {f"{r},{c}": level for (r, c), level in disasters.smoke.items()}
@@ -2153,6 +2236,7 @@ def run_headless_simulation(steps=240, dt=1 / 30.0, full_state=False):
         'exits': exits_list,
         'people': people_list,
         'hazards': hazards_list,
+        'shake': disasters.shake,
         'smoke': smoke_dict,
         'fires': disasters.get_fire_positions(),
         'pheromones': {
@@ -2222,7 +2306,13 @@ def _snapshot_from_state(state):
     stats = state['stats']
 
     hazards_list = [
-        {'row': r, 'col': c, 'type': info.get(TYPE, FIRE), 'intensity': info.get(INTENSITY, 1.0)}
+        {
+            'row': r,
+            'col': c,
+            'type': info.get(TYPE, FIRE),
+            'intensity': info.get(INTENSITY, 1.0),
+            'age': info.get(AGE, 0.0),
+        }
         for (r, c), info in disasters.hazards.items()
     ]
     smoke_dict = {f"{r},{c}": level for (r, c), level in disasters.smoke.items()}
@@ -2266,6 +2356,7 @@ def _snapshot_from_state(state):
         'exits': exits_list,
         'people': people_list,
         'hazards': hazards_list,
+        'shake': disasters.shake,
         'smoke': smoke_dict,
         'fires': disasters.get_fire_positions(),
         'pheromones': {

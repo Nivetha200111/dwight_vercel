@@ -25,6 +25,18 @@ const CONFIG = {
     PY_SIM_API_URL: '/api/headless'
 };
 
+async function sendCommand(payload) {
+    try {
+        await fetch(CONFIG.COMMAND_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+    } catch (err) {
+        console.warn('Command failed', err);
+    }
+}
+
 // Tile types
 const TILE = {
     FLOOR: 0,
@@ -1160,12 +1172,6 @@ function render() {
 function updateSimulation(dt) {
     if (gameState.paused) return;
 
-    // Backend-driven mode: skip local sim updates, only advance time for animations
-    if (CONFIG.USE_BACKEND) {
-        gameState.time += dt;
-        return;
-    }
-
     gameState.time += dt;
 
     // Ensure shake object exists
@@ -1181,6 +1187,11 @@ function updateSimulation(dt) {
     } else {
         gameState.shake.x = 0;
         gameState.shake.y = 0;
+    }
+
+    // Backend-driven mode: skip local sim updates (backend is authoritative)
+    if (CONFIG.USE_BACKEND) {
+        return;
     }
 
     // Update fires
@@ -2066,33 +2077,31 @@ function addFire(row, col) {
 
 function addBomb(row, col) {
     if (!inBounds(row, col) || gameState.maze[row]?.[col] === TILE.EXIT) return;
-    if (hasBomb(row, col)) return;
     if (CONFIG.USE_BACKEND) {
-        // Not supported backend-side; noop or local fallback
-        addChatMessage('system', 'Bomb placement not supported in backend mode.');
-        return;
-    }
-
-    gameState.bombs.push({ row, col, timer: 3, radius: 3 });
-    gameState.shake.intensity = Math.max(gameState.shake.intensity, 1.5);
-    addChatMessage('fire', `Bomb armed at (${row}, ${col}) - detonation imminent!`);
-    if (!gameState.stats.alarmActive) {
-        triggerAlarm();
+        sendCommand({ action: 'add_bomb', row, col });
+        addChatMessage('fire', `Bomb triggered at (${row}, ${col}) [backend]`);
+    } else {
+        gameState.bombs.push({ row, col, timer: 3, radius: 3 });
+        gameState.shake.intensity = Math.max(gameState.shake.intensity, 1.5);
+        addChatMessage('fire', `Bomb armed at (${row}, ${col}) - detonation imminent!`);
+        if (!gameState.stats.alarmActive) {
+            triggerAlarm();
+        }
     }
 }
 
 function addFlood(row, col) {
     if (!inBounds(row, col)) return;
     if (CONFIG.USE_BACKEND) {
-        addChatMessage('system', 'Flood placement not supported in backend mode.');
-        return;
-    }
-    if (isFlooded(row, col)) return;
-
-    gameState.floods.push({ row, col, depth: 0.7 });
-    addChatMessage('system', `Flood surge released at (${row}, ${col}).`);
-    if (!gameState.stats.alarmActive) {
-        triggerAlarm();
+        sendCommand({ action: 'add_flood', row, col });
+        addChatMessage('fire', `Flood triggered at (${row}, ${col}) [backend]`);
+    } else {
+        if (isFlooded(row, col)) return;
+        gameState.floods.push({ row, col, depth: 0.7 });
+        addChatMessage('system', `Flood surge released at (${row}, ${col}).`);
+        if (!gameState.stats.alarmActive) {
+            triggerAlarm();
+        }
     }
 }
 
@@ -2173,7 +2182,8 @@ function selectPersonAt(row, col) {
 function addEarthquake(row, col) {
     if (!inBounds(row, col)) return;
     if (CONFIG.USE_BACKEND) {
-        addChatMessage('system', 'Earthquake not supported in backend mode.');
+        sendCommand({ action: 'add_quake', row, col });
+        addChatMessage('alarm', `Earthquake epicenter set at (${row}, ${col}) [backend].`);
         return;
     }
 
@@ -2551,13 +2561,31 @@ async function pollBackendState() {
         if (data.exits) gameState.exits = data.exits;
         if (data.people) gameState.people = data.people;
         if (data.hazards) {
-            // Convert hazards to fires list for rendering
-            gameState.fires = data.hazards.filter(h => h.type === 'fire')
-                .map(h => ({ row: h.row, col: h.col, intensity: h.intensity || 1 }));
+            const fires = [];
+            const floods = [];
+            const debris = [];
+            data.hazards.forEach(h => {
+                if (h.type === 'fire') {
+                    fires.push({ row: h.row, col: h.col, intensity: h.intensity || 1 });
+                } else if (h.type === 'flood') {
+                    floods.push({ row: h.row, col: h.col, depth: h.intensity || 0.7 });
+                } else if (h.type === 'debris') {
+                    debris.push({ row: h.row, col: h.col, age: h.age || 0 });
+                }
+            });
+            gameState.fires = fires;
+            gameState.floods = floods;
+            gameState.debris = debris;
+            gameState.bombs = [];
         } else if (data.fires) {
             gameState.fires = data.fires.map(f => ({ row: f[0], col: f[1], intensity: 1 }));
         }
         gameState.smoke = data.smoke || {};
+        const quakeActive = (gameState.debris && gameState.debris.length > 0) || (typeof data.shake === 'number' && data.shake > 0.1);
+        gameState.earthquakeActive = quakeActive;
+        if (!quakeActive) {
+            gameState.earthquakeTimer = 0;
+        }
         gameState.stats.escaped = data.stats?.escaped || 0;
         gameState.stats.deaths = data.stats?.deaths || 0;
         gameState.stats.total = data.stats?.total || CONFIG.TOTAL_PEOPLE;
@@ -2566,6 +2594,9 @@ async function pollBackendState() {
         gameState.neural.confidence = data.neural?.confidence || 0;
         gameState.rl.decisions = data.rl?.decisions || 0;
         gameState.rl.avgReward = data.rl?.avg_reward || 0;
+        if (typeof data.shake === 'number') {
+            gameState.shake.intensity = Math.max(gameState.shake.intensity * 0.5, data.shake);
+        }
         if (data.rescue) {
             gameState.rescue = data.rescue;
         }

@@ -61,6 +61,27 @@ class handler(BaseHTTPRequestHandler):
                     self.wfile.write(json.dumps({'success': True}).encode())
                     return
 
+            if action == 'add_bomb':
+                if 0 <= row < len(state['maze']) and 0 <= col < len(state['maze'][0]):
+                    disasters.add_bomb(row, col)
+                    self._set_headers(200)
+                    self.wfile.write(json.dumps({'success': True}).encode())
+                    return
+
+            if action == 'add_flood':
+                if 0 <= row < len(state['maze']) and 0 <= col < len(state['maze'][0]):
+                    disasters.add_flood(row, col)
+                    self._set_headers(200)
+                    self.wfile.write(json.dumps({'success': True}).encode())
+                    return
+
+            if action == 'add_quake':
+                if 0 <= row < len(state['maze']) and 0 <= col < len(state['maze'][0]):
+                    disasters.trigger_quake(row, col)
+                    self._set_headers(200)
+                    self.wfile.write(json.dumps({'success': True}).encode())
+                    return
+
             if action == 'trigger_alarm':
                 alarm.trigger()
                 self._set_headers(200)
@@ -74,4 +95,3 @@ class handler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._set_headers(500)
             self.wfile.write(json.dumps({'success': False, 'error': str(exc)}).encode())
-
