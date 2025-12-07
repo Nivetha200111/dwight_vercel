@@ -19,7 +19,7 @@ const CONFIG = {
     NUM_SENSORS: 25,
     SPRINKLER_SPACING: 6,
     API_URL: '/api/simulate',
-    HEADLESS_URL: '/api/headless',
+    HEADLESS_URL: '/api/step',
     USE_BACKEND: true,
     PY_SIM_API_URL: '/api/headless'
 };
@@ -1158,6 +1158,12 @@ function render() {
 
 function updateSimulation(dt) {
     if (gameState.paused) return;
+
+    // Backend-driven mode: skip local sim updates, only advance time for animations
+    if (CONFIG.USE_BACKEND) {
+        gameState.time += dt;
+        return;
+    }
 
     gameState.time += dt;
 
@@ -2510,6 +2516,60 @@ async function fetchInitialState() {
     return true;
 }
 
+async function pollBackendState() {
+    if (!CONFIG.USE_BACKEND) return;
+    try {
+        const response = await fetch(`${CONFIG.HEADLESS_URL}?steps=60&dt=0.033&full=1`);
+        const data = await response.json();
+        if (!data.success) return;
+
+        // Apply snapshot
+        if (data.maze) gameState.maze = data.maze;
+        if (data.exits) gameState.exits = data.exits;
+        if (data.people) gameState.people = data.people;
+        if (data.hazards) {
+            // Convert hazards to fires list for rendering
+            gameState.fires = data.hazards.filter(h => h.type === 'fire')
+                .map(h => ({ row: h.row, col: h.col, intensity: h.intensity || 1 }));
+        } else if (data.fires) {
+            gameState.fires = data.fires.map(f => ({ row: f[0], col: f[1], intensity: 1 }));
+        }
+        gameState.smoke = data.smoke || {};
+        gameState.stats.escaped = data.stats?.escaped || 0;
+        gameState.stats.deaths = data.stats?.deaths || 0;
+        gameState.stats.total = data.stats?.total || CONFIG.TOTAL_PEOPLE;
+        gameState.stats.alarmActive = data.stats?.alarmActive || false;
+        if (data.sensors) gameState.sensors = data.sensors;
+        gameState.neural.confidence = data.neural?.confidence || 0;
+        gameState.rl.decisions = data.rl?.decisions || 0;
+        gameState.rl.avgReward = data.rl?.avg_reward || 0;
+        if (data.rescue) {
+            gameState.rescue = data.rescue;
+        }
+        if (data.pheromones) {
+            const safe = data.pheromones.safe || [];
+            const danger = data.pheromones.danger || [];
+            // Compute simple averages to drive UI bars
+            const safeFlat = safe.flat ? safe.flat() : [];
+            const dangerFlat = danger.flat ? danger.flat() : [];
+            const safeAvg = safeFlat.length ? safeFlat.reduce((a, b) => a + b, 0) / safeFlat.length : 0;
+            const dangerAvg = dangerFlat.length ? dangerFlat.reduce((a, b) => a + b, 0) / dangerFlat.length : 0;
+            gameState.neural.safePheromone = safeAvg;
+            gameState.neural.dangerPheromone = dangerAvg;
+        }
+        // Time for animations
+        if (typeof data.time === 'number') {
+            gameState.time = data.time;
+        }
+        // Sensor coverage for victory stats
+        if (data.sensor_fusion && data.sensor_fusion.coverage !== undefined) {
+            gameState.neural.coverage = data.sensor_fusion.coverage;
+        }
+    } catch (err) {
+        console.warn('Backend poll failed:', err);
+    }
+}
+
 function generateLocalState() {
     // Generate maze
     gameState.maze = [];
@@ -2880,6 +2940,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     initCanvas();
     setupEventListeners();
     await initGame();
+
+    // Start backend polling if enabled
+    if (CONFIG.USE_BACKEND) {
+        setInterval(pollBackendState, 500);
+    }
 
     // Start game loop
     requestAnimationFrame(gameLoop);

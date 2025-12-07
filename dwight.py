@@ -2028,7 +2028,7 @@ def main():
         print(f"RL Decisions Made: {rl_coordinator.decisions_made}")
         print(f"{'='*60}")
 
-def run_headless_simulation(steps=240, dt=1 / 30.0):
+def run_headless_simulation(steps=240, dt=1 / 30.0, full_state=False):
     """
     Run a trimmed-down simulation loop without rendering.
     Designed for serverless environments (e.g., Vercel) where no display/audio exists.
@@ -2042,6 +2042,7 @@ def run_headless_simulation(steps=240, dt=1 / 30.0):
     sensor_network = spawn_sensors(maze, NUM_SENSORS)
     rl_coordinator = RLEvacuationCoordinator()
     people = spawn_people(maze, TOTAL_PEOPLE, NUM_WARDENS)
+    rescue_system = RescueSystem()
 
     stats = {ESCAPED: 0, DEATHS: 0, TOTAL: TOTAL_PEOPLE}
 
@@ -2083,6 +2084,9 @@ def run_headless_simulation(steps=240, dt=1 / 30.0):
             p.update(dt, maze, exits, disasters.hazards, pathfinder,
                      alarm.active, people, disasters.smoke, neural_aco)
 
+        # Update rescue system
+        rescue_system.update(dt, maze, exits, people, pathfinder, disasters.hazards, pygame.time.get_ticks() / 1000.0, alarm.active)
+
         stats[ESCAPED] = sum(1 for p in people if p.escaped)
         stats[DEATHS] = sum(1 for p in people if not p.alive)
 
@@ -2091,16 +2095,78 @@ def run_headless_simulation(steps=240, dt=1 / 30.0):
             break
 
     sensor_snapshot = sensor_network.get_sensor_fusion_data()
+
+    if not full_state:
+        return {
+            STEPS_RUN: steps_run,
+            ESCAPED: stats[ESCAPED],
+            DEATHS: stats[DEATHS],
+            'alive': stats[TOTAL] - stats[ESCAPED] - stats[DEATHS],
+            'fires_active': len(disasters.get_fire_positions()),
+            'neural_confidence': neural_aco.neural_confidence,
+            'rl_decisions': rl_coordinator.decisions_made,
+            'sensor_coverage': sensor_snapshot.get(COVERAGE, 0),
+            'avg_temp': sensor_snapshot.get(TEMPERATURE_AVG, 0),
+        }
+
+    # Full snapshot for frontend integration
+    hazards_list = [
+        {'row': r, 'col': c, 'type': info.get(TYPE, FIRE), 'intensity': info.get(INTENSITY, 1.0)}
+        for (r, c), info in disasters.hazards.items()
+    ]
+    smoke_dict = {f"{r},{c}": level for (r, c), level in disasters.smoke.items()}
+    exits_list = [[r, c] for (r, c) in exits]
+    people_list = [{
+        'id': p.id,
+        'row': p.row,
+        'col': p.col,
+        'state': getattr(p, 'state', STATE_WORKING),
+        'isWarden': getattr(p, 'is_warden', False),
+        'health': getattr(p, 'health', 100),
+        'alive': getattr(p, 'alive', True),
+        'escaped': getattr(p, 'escaped', False),
+    } for p in people]
+    sensors_list = []
+    for s in sensor_network.sensors.values():
+        sensors_list.append({
+            'id': s.id,
+            'row': s.row,
+            'col': s.col,
+            'type': getattr(s, 'sensor_type', ''),
+            'value': getattr(s, 'value', 0),
+            'triggered': getattr(s, 'triggered', False),
+            'health': getattr(s, 'health', 100)
+        })
+
     return {
-        STEPS_RUN: steps_run,
-        ESCAPED: stats[ESCAPED],
-        DEATHS: stats[DEATHS],
-        'alive': stats[TOTAL] - stats[ESCAPED] - stats[DEATHS],
-        'fires_active': len(disasters.get_fire_positions()),
-        'neural_confidence': neural_aco.neural_confidence,
-        'rl_decisions': rl_coordinator.decisions_made,
-        'sensor_coverage': sensor_snapshot.get(COVERAGE, 0),
-        'avg_temp': sensor_snapshot.get(TEMPERATURE_AVG, 0),
+        'success': True,
+        'stats': {
+            STEPS_RUN: steps_run,
+            ESCAPED: stats[ESCAPED],
+            DEATHS: stats[DEATHS],
+            'alive': stats[TOTAL] - stats[ESCAPED] - stats[DEATHS],
+            'total': stats[TOTAL],
+            'alarmActive': alarm.active
+        },
+        'time': steps_run * dt,
+        'maze': maze,
+        'exits': exits_list,
+        'people': people_list,
+        'hazards': hazards_list,
+        'smoke': smoke_dict,
+        'fires': disasters.get_fire_positions(),
+        'pheromones': {
+            'safe': neural_aco.safe_pheromone.tolist(),
+            'danger': neural_aco.danger_pheromone.tolist(),
+            'predicted': neural_aco.predicted_danger.tolist()
+        },
+        'neural': {
+            'confidence': neural_aco.neural_confidence
+        },
+        'rl': rl_coordinator.get_stats(),
+        'rescue': rescue_system.get_stats(),
+        'sensors': sensors_list,
+        'sensor_fusion': sensor_snapshot
     }
 
 if __name__ == "__main__":

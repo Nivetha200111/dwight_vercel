@@ -1,5 +1,5 @@
 """
-Serverless endpoint to run the Python headless simulation and return stats.
+Vercel Serverless Function to advance the Python headless simulation and return full state.
 """
 
 from __future__ import annotations
@@ -18,52 +18,37 @@ os.environ.setdefault("HEADLESS", "1")
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
-from dwight import (
-    run_headless_simulation,
-    generate_building,
-    spawn_people,
-    TOTAL_PEOPLE,
-    NUM_WARDENS,
-)
+from dwight import run_headless_simulation
 
 
 def _clamp(value: float, min_val: float, max_val: float) -> float:
-    """Clamp value to range."""
     return max(min_val, min(max_val, value))
 
 
 class handler(BaseHTTPRequestHandler):
-    """Vercel serverless handler for headless simulation."""
-
-    def _set_headers(self, status: int = 200) -> None:
-        """Set response headers."""
+    def _set_headers(self, status: int = 200):
         self.send_response(status)
         self.send_header("Content-type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
 
-    def do_OPTIONS(self) -> None:
-        """Handle CORS preflight."""
+    def do_OPTIONS(self):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
-    def do_GET(self) -> None:
-        """Handle GET request - run headless simulation."""
+    def do_GET(self):
         try:
-            # Parse query parameters
             parsed = urlparse(self.path)
             qs = parse_qs(parsed.query)
-            steps = int(qs.get("steps", ["240"])[0])
+            steps = int(qs.get("steps", ["120"])[0])
             dt = float(qs.get("dt", ["0.0333"])[0])
 
-            # Basic safety limits
             steps = int(_clamp(steps, 1, 1500))
             dt = _clamp(dt, 1 / 120.0, 0.2)
 
-            # Run simulation with full state
             snapshot = run_headless_simulation(steps=steps, dt=dt, full_state=True)
 
             self._set_headers(200)
@@ -71,7 +56,5 @@ class handler(BaseHTTPRequestHandler):
 
         except Exception as exc:
             self._set_headers(500)
-            self.wfile.write(json.dumps({
-                "success": False,
-                "error": str(exc),
-            }).encode())
+            self.wfile.write(json.dumps({"success": False, "error": str(exc)}).encode())
+
