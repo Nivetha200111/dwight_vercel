@@ -170,9 +170,9 @@ def generate_sensors(maze, count):
     sensors = []
     spawns = []
 
-    for r in range(3, ROWS - 3, 4):
-        for c in range(3, COLS - 3, 4):
-            if maze[r][c] != WALL:
+    for r in range(2, ROWS - 2):
+        for c in range(2, COLS - 2):
+            if maze[r][c] in [FLOOR, CARPET, CORRIDOR, DOOR]:
                 spawns.append((r, c))
 
     random.shuffle(spawns)

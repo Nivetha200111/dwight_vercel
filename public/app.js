@@ -1413,6 +1413,32 @@ function addFlood(row, col) {
     }
 }
 
+function getNextSensorId() {
+    if (!gameState.sensors.length) return 0;
+    return Math.max(...gameState.sensors.map(s => s.id)) + 1;
+}
+
+function addSensor(row, col) {
+    if (!inBounds(row, col)) return;
+    if (gameState.maze[row]?.[col] === TILE.WALL || gameState.maze[row]?.[col] === TILE.EXIT) return;
+    if (gameState.sensors.some(s => s.row === row && s.col === col && s.health > 0)) return;
+
+    const sensorTypes = ['temperature', 'smoke', 'co', 'motion'];
+    const id = getNextSensorId();
+    const type = sensorTypes[id % sensorTypes.length];
+
+    gameState.sensors.push({
+        id,
+        row,
+        col,
+        type,
+        value: type === 'temperature' ? 22 : 0,
+        triggered: false,
+        health: 100
+    });
+    addChatMessage('system', `Sensor placed at (${row}, ${col}).`);
+}
+
 function addEarthquake(row, col) {
     if (!inBounds(row, col)) return;
 
@@ -1582,6 +1608,9 @@ function setupEventListeners() {
                 break;
             case 'flood':
                 addFlood(row, col);
+                break;
+            case 'sensor':
+                addSensor(row, col);
                 break;
         }
     });
@@ -1851,23 +1880,29 @@ function generateLocalState() {
     // Generate sensors
     gameState.sensors = [];
     const sensorTypes = ['temperature', 'smoke', 'co', 'motion'];
-    let sensorId = 0;
+    const sensorCandidates = [...spawns];
 
-    for (let r = 3; r < CONFIG.ROWS - 3; r += 4) {
-        for (let c = 3; c < CONFIG.COLS - 3; c += 4) {
-            if (gameState.maze[r][c] !== TILE.WALL && sensorId < CONFIG.NUM_SENSORS) {
-                gameState.sensors.push({
-                    id: sensorId,
-                    row: r,
-                    col: c,
-                    type: sensorTypes[sensorId % sensorTypes.length],
-                    value: sensorTypes[sensorId % sensorTypes.length] === 'temperature' ? 22 : 0,
-                    triggered: false,
-                    health: 100
-                });
-                sensorId++;
-            }
-        }
+    // Shuffle candidates
+    for (let i = sensorCandidates.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [sensorCandidates[i], sensorCandidates[j]] = [sensorCandidates[j], sensorCandidates[i]];
+    }
+
+    let sensorId = 0;
+    for (const [r, c] of sensorCandidates) {
+        if (sensorId >= CONFIG.NUM_SENSORS) break;
+        if (gameState.maze[r][c] === TILE.WALL || gameState.maze[r][c] === TILE.EXIT) continue;
+        const type = sensorTypes[sensorId % sensorTypes.length];
+        gameState.sensors.push({
+            id: sensorId,
+            row: r,
+            col: c,
+            type,
+            value: type === 'temperature' ? 22 : 0,
+            triggered: false,
+            health: 100
+        });
+        sensorId++;
     }
 }
 
@@ -1906,7 +1941,7 @@ async function initGame() {
         // Clear chat
         document.getElementById('chat-messages').innerHTML = '';
         addChatMessage('system', 'World loaded successfully!');
-        addChatMessage('system', 'Use 1-4 to pick Fire/Bomb/Quake/Flood, then click to place hazards');
+        addChatMessage('system', 'Use 1-5 to pick Fire/Bomb/Quake/Flood/Sensor, then click to place');
 
         gameState.startTime = Date.now();
     }, 2000);
