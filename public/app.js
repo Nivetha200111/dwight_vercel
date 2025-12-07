@@ -1191,6 +1191,7 @@ function updateSimulation(dt) {
 
     // Backend-driven mode: skip local sim updates (backend is authoritative)
     if (CONFIG.USE_BACKEND) {
+        updateBackendPlaceholders(dt);
         return;
     }
 
@@ -1217,6 +1218,20 @@ function updateSimulation(dt) {
 
     // Check victory condition
     checkVictory();
+}
+
+// Tick down short-lived placeholders when backend is authoritative
+function updateBackendPlaceholders(dt) {
+    const bombsNext = [];
+    gameState.bombs.forEach(b => {
+        if (b.pending) {
+            b.timer = (b.timer ?? 1) - dt;
+            if (b.timer > 0) bombsNext.push(b);
+        } else {
+            bombsNext.push(b);
+        }
+    });
+    gameState.bombs = bombsNext;
 }
 
 function updateFires(dt) {
@@ -2067,6 +2082,10 @@ function addFire(row, col) {
 
     if (CONFIG.USE_BACKEND) {
         sendCommand({ action: 'add_fire', row, col });
+        // Optimistic spark so users see immediate feedback
+        gameState.fires.push({ row, col, intensity: 1 });
+        gameState.shake.intensity = Math.max(gameState.shake.intensity, 1);
+        addChatMessage('fire', `Fire started at (${row}, ${col}) [backend].`);
     } else {
         gameState.fires.push({ row, col, age: 0, intensity: 1 });
         gameState.shake.intensity = 2;
@@ -2080,6 +2099,10 @@ function addBomb(row, col) {
     if (CONFIG.USE_BACKEND) {
         sendCommand({ action: 'add_bomb', row, col });
         addChatMessage('fire', `Bomb triggered at (${row}, ${col}) [backend]`);
+        // Optimistic glow until backend fires arrive
+        gameState.bombs.push({ row, col, timer: 1.2, radius: 3, pending: true });
+        gameState.shake.intensity = Math.max(gameState.shake.intensity, 1.5);
+        return;
     } else {
         gameState.bombs.push({ row, col, timer: 3, radius: 3 });
         gameState.shake.intensity = Math.max(gameState.shake.intensity, 1.5);
@@ -2095,6 +2118,9 @@ function addFlood(row, col) {
     if (CONFIG.USE_BACKEND) {
         sendCommand({ action: 'add_flood', row, col });
         addChatMessage('fire', `Flood triggered at (${row}, ${col}) [backend]`);
+        if (!isFlooded(row, col)) {
+            gameState.floods.push({ row, col, depth: 0.7, pending: true });
+        }
     } else {
         if (isFlooded(row, col)) return;
         gameState.floods.push({ row, col, depth: 0.7 });
