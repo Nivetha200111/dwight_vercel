@@ -1,0 +1,12 @@
+{
+  "name": "dwight-neural-aco-minecraft",
+  "version": "1.0.0",
+  "description": "Minecraft-themed Neural ACO Emergency Response System",
+  "scripts": {
+    "dev": "npx serve public",
+    "build": "echo 'Static site - no build needed'"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

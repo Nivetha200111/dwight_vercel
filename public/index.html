@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DWIGHT UX - Minecraft Emergency Evacuation</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=VT323&family=Press+Start+2P&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect fill='%234a3728' width='16' height='16'/><rect fill='%2362a84b' y='0' width='16' height='4'/></svg>">
+</head>
+<body>
+    <!-- Minecraft-style Loading Screen -->
+    <div id="loading-screen">
+        <div class="loading-content">
+            <div class="minecraft-logo">
+                <div class="logo-text">DWIGHT</div>
+                <div class="logo-subtitle">Neural ACO Emergency System</div>
+            </div>
+            <div class="loading-bar-container">
+                <div class="loading-bar"></div>
+            </div>
+            <div class="loading-text">Loading world...</div>
+            <div class="loading-tip">Tip: Fire wardens help evacuate people faster!</div>
+        </div>
+        <div class="dirt-background"></div>
+    </div>
+
+    <!-- Main Game Container -->
+    <div id="game-container" class="hidden">
+        <!-- Top HUD -->
+        <div id="top-hud">
+            <div class="hud-left">
+                <div class="stat-box">
+                    <div class="stat-icon hearts"></div>
+                    <div class="stat-label">ALIVE</div>
+                    <div class="stat-value" id="alive-count">60</div>
+                </div>
+                <div class="stat-box escaped-box">
+                    <div class="stat-icon emerald"></div>
+                    <div class="stat-label">ESCAPED</div>
+                    <div class="stat-value" id="escaped-count">0</div>
+                </div>
+                <div class="stat-box deaths-box">
+                    <div class="stat-icon skull"></div>
+                    <div class="stat-label">DEATHS</div>
+                    <div class="stat-value" id="death-count">0</div>
+                </div>
+            </div>
+            <div class="hud-center">
+                <div class="title-plate">
+                    <span class="title-text">EMERGENCY EVACUATION</span>
+                </div>
+                <div id="alarm-indicator" class="alarm-off">
+                    <span class="alarm-icon"></span>
+                    <span class="alarm-text">ALARM OFF</span>
+                </div>
+            </div>
+            <div class="hud-right">
+                <div class="neural-display">
+                    <div class="neural-title">NEURAL NET</div>
+                    <div class="neural-bar-container">
+                        <div class="neural-bar" id="neural-confidence-bar"></div>
+                    </div>
+                    <div class="neural-value" id="neural-confidence">0%</div>
+                </div>
+                <div class="speed-control">
+                    <span class="speed-label">SPEED:</span>
+                    <span class="speed-value" id="speed-display">1.0x</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content Area -->
+        <div id="main-content">
+            <!-- Left Side Panel -->
+            <div id="left-panel">
+                <div class="panel-section">
+                    <div class="section-header">
+                        <div class="section-icon book"></div>
+                        <span>CONTROLS</span>
+                    </div>
+                    <div class="control-list">
+                        <div class="control-item">
+                            <span class="key">CLICK</span>
+                            <span class="action">Place Fire</span>
+                        </div>
+                        <div class="control-item">
+                            <span class="key">A</span>
+                            <span class="action">Trigger Alarm</span>
+                        </div>
+                        <div class="control-item">
+                            <span class="key">P</span>
+                            <span class="action">Toggle Predictions</span>
+                        </div>
+                        <div class="control-item">
+                            <span class="key">T</span>
+                            <span class="action">Toggle Pheromones</span>
+                        </div>
+                        <div class="control-item">
+                            <span class="key">S</span>
+                            <span class="action">Toggle Sensors</span>
+                        </div>
+                        <div class="control-item">
+                            <span class="key">SPACE</span>
+                            <span class="action">Pause/Resume</span>
+                        </div>
+                        <div class="control-item">
+                            <span class="key">R</span>
+                            <span class="action">Reset World</span>
+                        </div>
+                        <div class="control-item">
+                            <span class="key">+/-</span>
+                            <span class="action">Speed Control</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <div class="section-header">
+                        <div class="section-icon redstone"></div>
+                        <span>IOT SENSORS</span>
+                    </div>
+                    <div class="sensor-grid">
+                        <div class="sensor-stat">
+                            <div class="sensor-icon temp"></div>
+                            <span class="sensor-label">Temp</span>
+                            <span class="sensor-value" id="sensor-temp">22.0C</span>
+                        </div>
+                        <div class="sensor-stat">
+                            <div class="sensor-icon smoke"></div>
+                            <span class="sensor-label">Smoke</span>
+                            <span class="sensor-value" id="sensor-smoke">0.00</span>
+                        </div>
+                        <div class="sensor-stat">
+                            <div class="sensor-icon co"></div>
+                            <span class="sensor-label">CO</span>
+                            <span class="sensor-value" id="sensor-co">0 ppm</span>
+                        </div>
+                        <div class="sensor-stat">
+                            <div class="sensor-icon motion"></div>
+                            <span class="sensor-label">Motion</span>
+                            <span class="sensor-value" id="sensor-motion">0</span>
+                        </div>
+                    </div>
+                    <div class="coverage-bar-container">
+                        <span class="coverage-label">Coverage:</span>
+                        <div class="coverage-bar">
+                            <div class="coverage-fill" id="sensor-coverage"></div>
+                        </div>
+                        <span class="coverage-value" id="sensor-coverage-text">100%</span>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <div class="section-header">
+                        <div class="section-icon enchant"></div>
+                        <span>RL COORDINATOR</span>
+                    </div>
+                    <div class="rl-stats">
+                        <div class="rl-stat">
+                            <span class="rl-label">Decisions:</span>
+                            <span class="rl-value" id="rl-decisions">0</span>
+                        </div>
+                        <div class="rl-stat">
+                            <span class="rl-label">Avg Reward:</span>
+                            <span class="rl-value" id="rl-reward">0.00</span>
+                        </div>
+                        <div class="rl-stat">
+                            <span class="rl-label">Exploration:</span>
+                            <span class="rl-value" id="rl-epsilon">20%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Game Canvas -->
+            <div id="canvas-container">
+                <canvas id="game-canvas"></canvas>
+                <div id="pause-overlay" class="hidden">
+                    <div class="pause-content">
+                        <div class="pause-title">GAME PAUSED</div>
+                        <div class="pause-subtitle">Press SPACE to resume</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Side Panel -->
+            <div id="right-panel">
+                <div class="panel-section">
+                    <div class="section-header">
+                        <div class="section-icon nether"></div>
+                        <span>FIRE STATUS</span>
+                    </div>
+                    <div class="fire-stats">
+                        <div class="fire-stat">
+                            <span class="fire-label">Active Fires:</span>
+                            <span class="fire-value" id="fire-count">0</span>
+                        </div>
+                        <div class="fire-stat">
+                            <span class="fire-label">Smoke Zones:</span>
+                            <span class="fire-value" id="smoke-zones">0</span>
+                        </div>
+                        <div class="fire-stat">
+                            <span class="fire-label">Danger Level:</span>
+                            <div class="danger-meter">
+                                <div class="danger-fill" id="danger-level"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <div class="section-header">
+                        <div class="section-icon ender"></div>
+                        <span>ACO PHEROMONES</span>
+                    </div>
+                    <div class="pheromone-display">
+                        <div class="pheromone-item safe">
+                            <div class="pheromone-bar-bg">
+                                <div class="pheromone-bar" id="safe-pheromone"></div>
+                            </div>
+                            <span class="pheromone-label">Safe Paths</span>
+                        </div>
+                        <div class="pheromone-item danger">
+                            <div class="pheromone-bar-bg">
+                                <div class="pheromone-bar" id="danger-pheromone"></div>
+                            </div>
+                            <span class="pheromone-label">Danger Zones</span>
+                        </div>
+                    </div>
+                    <div class="edge-tracker">
+                        <span class="edge-label">Tracked Paths:</span>
+                        <span class="edge-value" id="tracked-paths">0</span>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <div class="section-header">
+                        <div class="section-icon diamond"></div>
+                        <span>LSTM PREDICTIONS</span>
+                    </div>
+                    <div class="prediction-display">
+                        <div class="prediction-zones" id="prediction-zones">
+                            <span class="prediction-count">0</span>
+                            <span class="prediction-label">predicted danger zones</span>
+                        </div>
+                        <div class="confidence-ring">
+                            <svg viewBox="0 0 100 100">
+                                <circle class="ring-bg" cx="50" cy="50" r="40"/>
+                                <circle class="ring-fill" id="confidence-ring" cx="50" cy="50" r="40"/>
+                            </svg>
+                            <div class="confidence-center">
+                                <span class="confidence-value" id="confidence-percent">0%</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-section legend-section">
+                    <div class="section-header">
+                        <div class="section-icon map"></div>
+                        <span>LEGEND</span>
+                    </div>
+                    <div class="legend-grid">
+                        <div class="legend-item">
+                            <div class="legend-block floor"></div>
+                            <span>Floor</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-block wall"></div>
+                            <span>Wall</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-block corridor"></div>
+                            <span>Corridor</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-block exit"></div>
+                            <span>Exit</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-block carpet"></div>
+                            <span>Office</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-block fire"></div>
+                            <span>Fire</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-person normal"></div>
+                            <span>Person</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-person warden"></div>
+                            <span>Warden</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Hotbar -->
+        <div id="hotbar">
+            <div class="hotbar-slot selected" data-tool="fire" title="Place Fire">
+                <div class="slot-icon fire-block"></div>
+                <span class="slot-key">1</span>
+            </div>
+            <div class="hotbar-slot" data-tool="water" title="Place Water (Coming Soon)">
+                <div class="slot-icon water-block"></div>
+                <span class="slot-key">2</span>
+            </div>
+            <div class="hotbar-slot" data-tool="barrier" title="Place Barrier (Coming Soon)">
+                <div class="slot-icon barrier-block"></div>
+                <span class="slot-key">3</span>
+            </div>
+            <div class="hotbar-slot" data-tool="sensor" title="Place Sensor (Coming Soon)">
+                <div class="slot-icon sensor-block"></div>
+                <span class="slot-key">4</span>
+            </div>
+            <div class="hotbar-slot" data-tool="warden" title="Spawn Warden (Coming Soon)">
+                <div class="slot-icon warden-block"></div>
+                <span class="slot-key">5</span>
+            </div>
+            <div class="hotbar-slot empty">
+                <span class="slot-key">6</span>
+            </div>
+            <div class="hotbar-slot empty">
+                <span class="slot-key">7</span>
+            </div>
+            <div class="hotbar-slot empty">
+                <span class="slot-key">8</span>
+            </div>
+            <div class="hotbar-slot" data-tool="reset" title="Reset World">
+                <div class="slot-icon reset-block"></div>
+                <span class="slot-key">9</span>
+            </div>
+        </div>
+
+        <!-- Chat/Event Log -->
+        <div id="chat-log">
+            <div class="chat-messages" id="chat-messages">
+                <div class="chat-message system">[System] World loaded successfully!</div>
+                <div class="chat-message system">[System] Click anywhere to place fire blocks</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Victory Screen -->
+    <div id="victory-screen" class="hidden">
+        <div class="victory-content">
+            <div class="victory-title">EVACUATION COMPLETE</div>
+            <div class="victory-stats">
+                <div class="victory-stat">
+                    <span class="victory-label">Escaped:</span>
+                    <span class="victory-value" id="victory-escaped">0</span>
+                </div>
+                <div class="victory-stat">
+                    <span class="victory-label">Casualties:</span>
+                    <span class="victory-value" id="victory-deaths">0</span>
+                </div>
+                <div class="victory-stat">
+                    <span class="victory-label">Time:</span>
+                    <span class="victory-value" id="victory-time">0:00</span>
+                </div>
+            </div>
+            <div class="victory-rating" id="victory-rating">
+                <!-- Stars will be added here -->
+            </div>
+            <button class="minecraft-btn" id="restart-btn">PLAY AGAIN</button>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
