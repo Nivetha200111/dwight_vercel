@@ -1,11 +1,17 @@
 """
 Vercel Serverless Function for DWIGHT Neural ACO Emergency Simulation
-Returns simulation state data for the Minecraft-themed frontend
+
+Returns simulation state data for the Minecraft-themed frontend.
 """
+
+from __future__ import annotations
 
 import json
 import os
 import sys
+import random
+from http.server import BaseHTTPRequestHandler
+from typing import List, Dict, Any, Tuple
 
 # Ensure we can import from parent directory
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -15,127 +21,34 @@ os.environ["HEADLESS"] = "1"
 os.environ["SDL_VIDEODRIVER"] = "dummy"
 os.environ["SDL_AUDIODRIVER"] = "dummy"
 
-from http.server import BaseHTTPRequestHandler
-import random
-import math
-import numpy as np
-from collections import defaultdict
+from dwight.config import (
+    ROWS, COLS,
+    SIMULATION,
+    TileType, SensorType,
+)
+from dwight.core.building import generate_building
 
-# Constants matching dwight.py
-ROWS = 45
-COLS = 70
-TOTAL_PEOPLE = 60
-NUM_WARDENS = 4
-NUM_SENSORS = 25
 
-# Tile types
-FLOOR = 0
-WALL = 1
-EXIT = 2
-DOOR = 3
-CORRIDOR = 4
-CARPET = 5
-
-def generate_building():
-    """Generate building layout."""
-    maze = [[FLOOR for _ in range(COLS)] for _ in range(ROWS)]
-    exits = []
-
-    for r in range(ROWS):
-        maze[r][0] = WALL
-        maze[r][COLS-1] = WALL
-    for c in range(COLS):
-        maze[0][c] = WALL
-        maze[ROWS-1][c] = WALL
-
-    h_corr = [ROWS // 3, 2 * ROWS // 3]
-    v_corr = [COLS // 4, COLS // 2, 3 * COLS // 4]
-
-    for hr in h_corr:
-        for c in range(1, COLS - 1):
-            for r in range(hr - 1, hr + 2):
-                if 0 < r < ROWS - 1:
-                    maze[r][c] = CORRIDOR
-
-    for vc in v_corr:
-        for r in range(1, ROWS - 1):
-            for c in range(vc - 1, vc + 2):
-                if 0 < c < COLS - 1:
-                    maze[r][c] = CORRIDOR
-
-    def make_room(r1, r2, c1, c2):
-        for r in range(r1, r2 + 1):
-            if maze[r][c1] != CORRIDOR: maze[r][c1] = WALL
-            if maze[r][c2] != CORRIDOR: maze[r][c2] = WALL
-        for c in range(c1, c2 + 1):
-            if maze[r1][c] != CORRIDOR: maze[r1][c] = WALL
-            if maze[r2][c] != CORRIDOR: maze[r2][c] = WALL
-
-        for r in range(r1 + 1, r2):
-            for c in range(c1 + 1, c2):
-                if maze[r][c] != CORRIDOR:
-                    maze[r][c] = CARPET
-
-        for c in range(c1 + 1, c2):
-            if r2 + 1 < ROWS and maze[r2 + 1][c] == CORRIDOR:
-                maze[r2][c] = DOOR
-                return
-            if r1 - 1 > 0 and maze[r1 - 1][c] == CORRIDOR:
-                maze[r1][c] = DOOR
-                return
-
-    sections = [
-        (2, h_corr[0] - 2, 2, v_corr[0] - 2),
-        (2, h_corr[0] - 2, v_corr[0] + 2, v_corr[1] - 2),
-        (2, h_corr[0] - 2, v_corr[1] + 2, v_corr[2] - 2),
-        (2, h_corr[0] - 2, v_corr[2] + 2, COLS - 3),
-        (h_corr[0] + 2, h_corr[1] - 2, 2, v_corr[0] - 2),
-        (h_corr[0] + 2, h_corr[1] - 2, v_corr[2] + 2, COLS - 3),
-        (h_corr[1] + 2, ROWS - 3, 2, v_corr[0] - 2),
-        (h_corr[1] + 2, ROWS - 3, v_corr[0] + 2, v_corr[1] - 2),
-        (h_corr[1] + 2, ROWS - 3, v_corr[1] + 2, v_corr[2] - 2),
-        (h_corr[1] + 2, ROWS - 3, v_corr[2] + 2, COLS - 3),
-    ]
-
-    for r1, r2, c1, c2 in sections:
-        if r2 - r1 > 3 and c2 - c1 > 3:
-            make_room(r1, r2, c1, c2)
-
-    exit_pos = [
-        (h_corr[0], 1), (h_corr[1], 1),
-        (h_corr[0], COLS - 2), (h_corr[1], COLS - 2),
-        (1, v_corr[0]), (1, v_corr[1]), (1, v_corr[2]),
-        (ROWS - 2, v_corr[0]), (ROWS - 2, v_corr[1]), (ROWS - 2, v_corr[2]),
-    ]
-
-    for er, ec in exit_pos:
-        if 0 < er < ROWS - 1 and 0 < ec < COLS - 1:
-            maze[er][ec] = EXIT
-            exits.append([er, ec])
-            for dr in range(-1, 2):
-                for dc in range(-1, 2):
-                    nr, nc = er + dr, ec + dc
-                    if 0 < nr < ROWS - 1 and 0 < nc < COLS - 1:
-                        if maze[nr][nc] == WALL:
-                            maze[nr][nc] = CORRIDOR
-
-    return maze, exits
-
-def generate_people(maze, count, num_wardens):
-    """Generate people positions."""
-    people = []
-    spawns = []
+def generate_people(
+    maze: List[List[int]],
+    count: int,
+    num_wardens: int
+) -> List[Dict[str, Any]]:
+    """Generate people positions for the frontend."""
+    people: List[Dict[str, Any]] = []
+    spawns: List[Tuple[int, int]] = []
 
     for r in range(2, ROWS - 2):
         for c in range(2, COLS - 2):
-            if maze[r][c] in [CARPET, FLOOR, CORRIDOR]:
+            if maze[r][c] in [TileType.CARPET, TileType.FLOOR, TileType.CORRIDOR]:
                 spawns.append((r, c))
 
     random.shuffle(spawns)
     states = ["working", "headphones", "aware", "evacuating"]
 
-    corridor_spawns = [(r, c) for r, c in spawns if maze[r][c] == CORRIDOR]
+    corridor_spawns = [(r, c) for r, c in spawns if maze[r][c] == TileType.CORRIDOR]
 
+    # Wardens
     for i in range(min(num_wardens, len(corridor_spawns))):
         r, c = corridor_spawns[i]
         people.append({
@@ -146,9 +59,10 @@ def generate_people(maze, count, num_wardens):
             "isWarden": True,
             "health": 100,
             "alive": True,
-            "escaped": False
+            "escaped": False,
         })
 
+    # Civilians
     for i in range(num_wardens, min(count, len(spawns))):
         r, c = spawns[i]
         state = random.choice(states[:2])
@@ -160,94 +74,117 @@ def generate_people(maze, count, num_wardens):
             "isWarden": False,
             "health": 100,
             "alive": True,
-            "escaped": False
+            "escaped": False,
         })
 
     return people
 
-def generate_sensors(maze, count):
-    """Generate sensor positions."""
-    sensors = []
-    spawns = []
+
+def generate_sensors(maze: List[List[int]], count: int) -> List[Dict[str, Any]]:
+    """Generate sensor positions for the frontend."""
+    sensors: List[Dict[str, Any]] = []
+    spawns: List[Tuple[int, int]] = []
 
     for r in range(2, ROWS - 2):
         for c in range(2, COLS - 2):
-            if maze[r][c] in [FLOOR, CARPET, CORRIDOR, DOOR]:
+            if maze[r][c] in [TileType.FLOOR, TileType.CARPET, TileType.CORRIDOR, TileType.DOOR]:
                 spawns.append((r, c))
 
-    sensor_types = ['temperature', 'smoke', 'co', 'motion']
+    sensor_types = [
+        SensorType.TEMPERATURE,
+        SensorType.SMOKE,
+        SensorType.CO,
+        SensorType.MOTION,
+    ]
+
+    # Use bucket-based distribution
     buckets_r = 5
     buckets_c = 5
     bucket_h = ROWS // buckets_r
     bucket_w = COLS // buckets_c
 
     sensor_id = 0
-    leftover = []
+    leftover: List[Tuple[int, int]] = []
 
     for br in range(buckets_r):
         for bc in range(buckets_c):
             if sensor_id >= count:
                 break
+
             r_min = br * bucket_h
             r_max = ROWS if br == buckets_r - 1 else (br + 1) * bucket_h
             c_min = bc * bucket_w
             c_max = COLS if bc == buckets_c - 1 else (bc + 1) * bucket_w
 
-            candidates = [(r, c) for (r, c) in spawns if r_min <= r < r_max and c_min <= c < c_max and maze[r][c] != EXIT]
+            candidates = [
+                (r, c) for (r, c) in spawns
+                if r_min <= r < r_max and c_min <= c < c_max
+                and maze[r][c] != TileType.EXIT
+            ]
+
             if not candidates:
                 continue
 
             pick = random.choice(candidates)
+            sensor_type = sensor_types[sensor_id % len(sensor_types)]
+
             sensors.append({
                 "id": sensor_id,
                 "row": pick[0],
                 "col": pick[1],
-                "type": sensor_types[sensor_id % len(sensor_types)],
-                "value": random.uniform(20, 25) if sensor_types[sensor_id % len(sensor_types)] == 'temperature' else 0,
+                "type": sensor_type,
+                "value": random.uniform(20, 25) if sensor_type == SensorType.TEMPERATURE else 0,
                 "triggered": False,
-                "health": 100
+                "health": 100,
             })
             sensor_id += 1
-
             leftover.extend(pos for pos in candidates if pos != pick)
 
+    # Fill remaining with leftover positions
     random.shuffle(leftover)
     for r, c in leftover:
         if sensor_id >= count:
             break
+        sensor_type = sensor_types[sensor_id % len(sensor_types)]
         sensors.append({
             "id": sensor_id,
             "row": r,
             "col": c,
-            "type": sensor_types[sensor_id % len(sensor_types)],
-            "value": random.uniform(20, 25) if sensor_types[sensor_id % len(sensor_types)] == 'temperature' else 0,
+            "type": sensor_type,
+            "value": random.uniform(20, 25) if sensor_type == SensorType.TEMPERATURE else 0,
             "triggered": False,
-            "health": 100
+            "health": 100,
         })
         sensor_id += 1
 
     return sensors
 
+
 class handler(BaseHTTPRequestHandler):
-    def do_GET(self):
+    """Vercel serverless handler for initial state generation."""
+
+    def do_GET(self) -> None:
         """Handle GET request - return initial simulation state."""
         try:
             random.seed()
             maze, exits = generate_building()
-            people = generate_people(maze, TOTAL_PEOPLE, NUM_WARDENS)
-            sensors = generate_sensors(maze, NUM_SENSORS)
+            people = generate_people(maze, SIMULATION.total_people, SIMULATION.num_wardens)
+            sensors = generate_sensors(maze, SIMULATION.num_sensors)
+
+            # Convert exits to list format
+            exits_list = [[r, c] for r, c in exits]
 
             response_data = {
                 "success": True,
                 "config": {
                     "rows": ROWS,
                     "cols": COLS,
-                    "totalPeople": TOTAL_PEOPLE,
-                    "numWardens": NUM_WARDENS,
-                    "numSensors": NUM_SENSORS
+                    "totalPeople": SIMULATION.total_people,
+                    "numWardens": SIMULATION.num_wardens,
+                    "numSensors": SIMULATION.num_sensors,
                 },
                 "maze": maze,
-                "exits": exits,
+                "exits": exits_list,
                 "people": people,
                 "sensors": sensors,
                 "fires": [],
@@ -255,42 +192,42 @@ class handler(BaseHTTPRequestHandler):
                 "stats": {
                     "escaped": 0,
                     "deaths": 0,
-                    "total": TOTAL_PEOPLE,
-                    "alarmActive": False
+                    "total": SIMULATION.total_people,
+                    "alarmActive": False,
                 },
                 "neural": {
                     "confidence": 0.0,
                     "predictions": [],
                     "safePheromone": 0.1,
-                    "dangerPheromone": 0.0
+                    "dangerPheromone": 0.0,
                 },
                 "rl": {
                     "decisions": 0,
                     "avgReward": 0.0,
-                    "epsilon": 0.2
-                }
+                    "epsilon": 0.2,
+                },
             }
 
             self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header("Content-type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(json.dumps(response_data).encode())
 
         except Exception as e:
             self.send_response(500)
-            self.send_header('Content-type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header("Content-type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(json.dumps({
                 "success": False,
-                "error": str(e)
+                "error": str(e),
             }).encode())
 
-    def do_OPTIONS(self):
+    def do_OPTIONS(self) -> None:
         """Handle CORS preflight."""
         self.send_response(200)
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
