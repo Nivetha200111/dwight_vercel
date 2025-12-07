@@ -13,6 +13,7 @@ const CONFIG = {
     ROWS: 45,
     COLS: 70,
     TILE_SIZE: 12,
+    MAX_TILE: 18,
     TOTAL_PEOPLE: 60,
     NUM_WARDENS: 4,
     NUM_SENSORS: 25,
@@ -96,6 +97,7 @@ const gameState = {
     bombs: [],
     floods: [],
     debris: [],
+    furniture: [],
     earthquakeActive: false,
     earthquakeTimer: 0,
     earthquakeEpicenter: null,
@@ -141,6 +143,7 @@ const gameState = {
     showPredictions: true,
     showPheromones: true,
     showSensors: true,
+    showDetailInset: true,
 
     // Selected tool
     selectedTool: 'fire',
@@ -148,6 +151,9 @@ const gameState = {
 
     // Screen shake
     shake: { x: 0, y: 0, intensity: 0 },
+
+    // Zoom
+    zoom: 1.0,
 
     // Python headless telemetry
     pythonTelemetry: {
@@ -207,7 +213,8 @@ function resizeCanvas() {
     // Calculate tile size to fit the maze
     const maxTileWidth = Math.floor(containerWidth / CONFIG.COLS);
     const maxTileHeight = Math.floor(containerHeight / CONFIG.ROWS);
-    tileSize = Math.max(4, Math.min(maxTileWidth, maxTileHeight, 14));
+    const baseTile = Math.max(4, Math.min(maxTileWidth, maxTileHeight, CONFIG.MAX_TILE));
+    tileSize = Math.min(baseTile * (gameState.zoom || 1), CONFIG.MAX_TILE * 1.5);
 
     canvasWidth = CONFIG.COLS * tileSize;
     canvasHeight = CONFIG.ROWS * tileSize;
@@ -487,6 +494,25 @@ function drawDebris(debris) {
     }
     ctx.strokeStyle = '#1d1f24';
     ctx.strokeRect(x, y, tileSize, tileSize);
+    ctx.restore();
+}
+
+function drawFurniture(item) {
+    const x = item.col * tileSize + (gameState.shake?.x || 0);
+    const y = item.row * tileSize + (gameState.shake?.y || 0);
+    const top = tileSize * 0.6;
+
+    ctx.save();
+    ctx.fillStyle = '#5f4025';
+    ctx.fillRect(x + 1, y + tileSize - top, tileSize - 2, top);
+    ctx.fillStyle = '#7a5530';
+    ctx.fillRect(x + 1, y + tileSize - top - 3, tileSize - 2, 3);
+    ctx.strokeStyle = '#1f140d';
+    ctx.strokeRect(x + 1, y + tileSize - top, tileSize - 2, top);
+    // Legs
+    ctx.fillStyle = '#2a1a0f';
+    ctx.fillRect(x + 2, y + tileSize - 4, 3, 4);
+    ctx.fillRect(x + tileSize - 5, y + tileSize - 4, 3, 4);
     ctx.restore();
 }
 
@@ -958,6 +984,7 @@ function render() {
     gameState.floods.forEach(drawFlood);
     gameState.bombs.forEach(drawBomb);
     gameState.debris.forEach(drawDebris);
+    gameState.furniture.forEach(drawFurniture);
 
     // Draw smoke
     Object.entries(gameState.smoke).forEach(([key, level]) => {
@@ -1815,6 +1842,17 @@ function setDefaultPOV() {
     }
 }
 
+function populateFurniture() {
+    gameState.furniture = [];
+    for (let r = 2; r < CONFIG.ROWS - 2; r++) {
+        for (let c = 2; c < CONFIG.COLS - 2; c++) {
+            if (gameState.maze[r][c] === TILE.CARPET && Math.random() < 0.06) {
+                gameState.furniture.push({ row: r, col: c, type: 'desk' });
+            }
+        }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // GAME ACTIONS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2032,6 +2070,11 @@ function addChatMessage(type, text) {
     }, 10000);
 }
 
+function changeZoom(delta) {
+    gameState.zoom = Math.max(0.8, Math.min(1.8, gameState.zoom + delta));
+    resizeCanvas();
+}
+
 function showVictoryScreen() {
     gameState.paused = true;
 
@@ -2143,6 +2186,14 @@ function setupEventListeners() {
                 gameState.showSensorZones = !gameState.showSensorZones;
                 addChatMessage('system', `Sensor zones: ${gameState.showSensorZones ? 'ON' : 'OFF'}`);
                 break;
+            case '[':
+                changeZoom(-0.1);
+                addChatMessage('system', `Zoom: ${(gameState.zoom * 100).toFixed(0)}%`);
+                break;
+            case ']':
+                changeZoom(0.1);
+                addChatMessage('system', `Zoom: ${(gameState.zoom * 100).toFixed(0)}%`);
+                break;
             case 'r':
                 resetGame();
                 break;
@@ -2217,6 +2268,7 @@ async function fetchInitialState() {
             gameState.sensors = data.sensors;
             gameState.stats.total = data.config.totalPeople;
             setDefaultPOV();
+            populateFurniture();
             return true;
         }
     } catch (error) {
@@ -2452,6 +2504,9 @@ function generateLocalState() {
     }
 
     setDefaultPOV();
+
+    // Populate furniture (desks) in office tiles
+    populateFurniture();
 }
 
 async function initGame() {
