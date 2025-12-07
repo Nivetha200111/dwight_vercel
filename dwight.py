@@ -2020,8 +2020,15 @@ from typing import List, Tuple, Dict, Optional
 import time
 
 pygame.init()
+audio_ready = False
 if not HEADLESS:
-    pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
+    try:
+        if not pygame.mixer.get_init():
+            pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
+        audio_ready = True
+    except Exception as e:
+        # Keep running without audio if mixer fails (e.g., no device)
+        print(f"[audio] mixer init failed: {e}. Running in silent mode.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION
@@ -3136,7 +3143,7 @@ class SilentSoundSystem:
     def stop_alarm(self):
         return None
 
-sound_system = SilentSoundSystem() if HEADLESS else SoundSystem()
+sound_system = SoundSystem() if (not HEADLESS and audio_ready) else SilentSoundSystem()
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # COLORS (Enhanced for 3D look)
@@ -4055,6 +4062,35 @@ class Person:
 
         self.rl_target = None  # For RL coordinator
 
+    def emergency_step(self, maze, hazards, smoke):
+        """Last-ditch move when trapped: step to least dangerous neighbor."""
+        candidates = []
+        for dr, dc in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+            nr, nc = self.row + dr, self.col + dc
+            if not (0 <= nr < ROWS and 0 <= nc < COLS):
+                continue
+            if maze[nr][nc] == WALL:
+                continue
+            # Danger score prefers clear tiles but allows moving through mild hazard
+            hazard_penalty = 2.0 if (nr, nc) in hazards else 0.0
+            smoke_penalty = smoke.get((nr, nc), 0) * 1.5
+            distance_bias = 0.1 * (abs(dr) + abs(dc))
+            danger = hazard_penalty + smoke_penalty + distance_bias
+            candidates.append((danger, random.random(), nr, nc))
+
+        if not candidates:
+            return False
+
+        candidates.sort()
+        _, _, nr, nc = candidates[0]
+        self.tx = nc * TILE + TILE // 2
+        self.ty = nr * TILE + TILE // 2
+        self.row, self.col = nr, nc
+        self.path = []
+        self.path_index = 0
+        self.moving = True
+        return True
+
     def find_exit(self, exits, pathfinder, maze, hazards):
         if not exits:
             return
@@ -4189,6 +4225,9 @@ class Person:
                     # Check if path blocked
                     if (nr, nc) in hazards:
                         self.find_exit(exits, pathfinder, maze, hazards)
+                        # If still blocked, attempt emergency sidestep
+                        if (not self.path) and self.emergency_step(maze, hazards, smoke):
+                            return
                         return
 
                     self.tx = nc * TILE + TILE // 2
@@ -4196,6 +4235,11 @@ class Person:
                     self.row, self.col = nr, nc
                     self.path_index += 1
                     self.moving = True
+                else:
+                    # No path found (likely surrounded) → emergency move to least dangerous neighbor
+                    if self.emergency_step(maze, hazards, smoke):
+                        self.state = STATE_PANICKING
+                        return
 
         if self.moving:
             self.walk_frame += dt * 12
