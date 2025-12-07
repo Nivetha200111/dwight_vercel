@@ -2761,6 +2761,7 @@ class SoundSystem:
     def __init__(self):
         self.sounds = {}
         self.alarm_playing = False
+        self.help_beep_timers = {}  # Track beep timers for hurt people
         self.generate_sounds()
 
     def generate_sounds(self):
@@ -2793,13 +2794,82 @@ class SoundSystem:
         ping_stereo = np.column_stack((ping, ping))
         self.sounds['sensor'] = pygame.sndarray.make_sound(ping_stereo)
 
-        # Success
+        # Success/Escape chime
         duration = 0.3
         t = np.linspace(0, duration, int(sample_rate * duration), False)
         chime = np.sin(2 * np.pi * 880 * t) * np.exp(-t * 5) * 0.2
         chime = (chime * 32767).astype(np.int16)
         chime_stereo = np.column_stack((chime, chime))
         self.sounds['escape'] = pygame.sndarray.make_sound(chime_stereo)
+
+        # HELP BEEP - urgent distress signal
+        duration = 0.4
+        t = np.linspace(0, duration, int(sample_rate * duration), False)
+        # Three rapid beeps pattern
+        beep1 = np.sin(2 * np.pi * 1500 * t) * np.where(t < 0.1, 1, 0)
+        beep2 = np.sin(2 * np.pi * 1500 * t) * np.where((t > 0.15) & (t < 0.25), 1, 0)
+        beep3 = np.sin(2 * np.pi * 1500 * t) * np.where(t > 0.3, 1, 0)
+        help_beep = (beep1 + beep2 + beep3) * 0.3
+        help_beep = (help_beep * 32767).astype(np.int16)
+        help_stereo = np.column_stack((help_beep, help_beep))
+        self.sounds['help_beep'] = pygame.sndarray.make_sound(help_stereo)
+
+        # RESCUE ARRIVAL - heroic fanfare
+        duration = 0.5
+        t = np.linspace(0, duration, int(sample_rate * duration), False)
+        # Rising triumphant tone
+        freq_rise = 400 + 600 * (t / duration)
+        rescue = np.sin(2 * np.pi * freq_rise * t) * 0.25 * np.exp(-t * 2)
+        rescue += np.sin(2 * np.pi * freq_rise * 1.5 * t) * 0.15 * np.exp(-t * 2)
+        rescue = (rescue * 32767).astype(np.int16)
+        rescue_stereo = np.column_stack((rescue, rescue))
+        self.sounds['rescue'] = pygame.sndarray.make_sound(rescue_stereo)
+
+        # FIRE CRACKLE
+        duration = 0.3
+        t = np.linspace(0, duration, int(sample_rate * duration), False)
+        noise = np.random.randn(len(t)) * 0.15
+        # Filter to make it crackly
+        crackle = noise * np.exp(-((t - 0.15) ** 2) / 0.01)
+        crackle = (crackle * 32767).astype(np.int16)
+        crackle_stereo = np.column_stack((crackle, crackle))
+        self.sounds['fire'] = pygame.sndarray.make_sound(crackle_stereo)
+
+        # SPRINKLER SPRAY
+        duration = 0.5
+        t = np.linspace(0, duration, int(sample_rate * duration), False)
+        # White noise for water spray
+        spray = np.random.randn(len(t)) * 0.1
+        spray = spray * (1 - np.exp(-t * 10))  # Fade in
+        spray = (spray * 32767).astype(np.int16)
+        spray_stereo = np.column_stack((spray, spray))
+        self.sounds['sprinkler'] = pygame.sndarray.make_sound(spray_stereo)
+
+        # FOOTSTEPS (running)
+        duration = 0.15
+        t = np.linspace(0, duration, int(sample_rate * duration), False)
+        step = np.sin(2 * np.pi * 100 * t) * np.exp(-t * 30) * 0.2
+        step = (step * 32767).astype(np.int16)
+        step_stereo = np.column_stack((step, step))
+        self.sounds['footstep'] = pygame.sndarray.make_sound(step_stereo)
+
+        # DEATH/INJURY sound
+        duration = 0.4
+        t = np.linspace(0, duration, int(sample_rate * duration), False)
+        injury = np.sin(2 * np.pi * 200 * t) * np.exp(-t * 5) * 0.3
+        injury += np.sin(2 * np.pi * 150 * t) * np.exp(-t * 4) * 0.2
+        injury = (injury * 32767).astype(np.int16)
+        injury_stereo = np.column_stack((injury, injury))
+        self.sounds['injury'] = pygame.sndarray.make_sound(injury_stereo)
+
+        # PANIC scream (stylized)
+        duration = 0.3
+        t = np.linspace(0, duration, int(sample_rate * duration), False)
+        freq_panic = 800 + 400 * np.sin(t * 50)
+        panic = np.sin(2 * np.pi * freq_panic * t) * 0.2 * np.exp(-t * 4)
+        panic = (panic * 32767).astype(np.int16)
+        panic_stereo = np.column_stack((panic, panic))
+        self.sounds['panic'] = pygame.sndarray.make_sound(panic_stereo)
 
     def play(self, name, volume=0.5):
         if name in self.sounds:
@@ -2970,6 +3040,165 @@ class NeuralPathfinder:
         self.cache.clear()
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# ML-ACTIVATED SPRINKLER SYSTEM
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class SprinklerSystem:
+    """
+    Intelligent sprinkler system that activates based on:
+    - LSTM neural network fire spread predictions
+    - Sensor network data
+    - ACO danger pheromone levels
+    """
+    def __init__(self):
+        self.sprinklers = {}  # (row, col) -> {'active': bool, 'water_level': float}
+        self.water_particles = []
+        self.activation_threshold = 0.4  # ML prediction confidence to activate
+        self.suppression_rate = 0.8  # How fast sprinklers reduce fire intensity
+        self.coverage_radius = 2  # Tiles around each sprinkler
+
+    def install_sprinklers(self, maze):
+        """Install sprinklers throughout the building."""
+        for r in range(2, ROWS - 2, 4):
+            for c in range(2, COLS - 2, 4):
+                if maze[r][c] not in [WALL, EXIT]:
+                    self.sprinklers[(r, c)] = {
+                        'active': False,
+                        'water_level': 100.0,
+                        'activation_time': 0
+                    }
+
+    def update(self, dt, neural_aco, predictions, hazards, time_val):
+        """Update sprinklers based on ML predictions and sensor data."""
+        activated_zones = set()
+
+        # Check predictions from LSTM
+        for r, c, prob in predictions:
+            if prob > self.activation_threshold:
+                activated_zones.add((r, c))
+                # Also activate nearby sprinklers
+                for dr in range(-2, 3):
+                    for dc in range(-2, 3):
+                        activated_zones.add((r + dr, c + dc))
+
+        # Check danger pheromone levels
+        for r in range(ROWS):
+            for c in range(COLS):
+                if neural_aco.danger_pheromone[r, c] > 1.5:
+                    activated_zones.add((r, c))
+
+        # Check actual fire positions
+        for pos in hazards:
+            for dr in range(-2, 3):
+                for dc in range(-2, 3):
+                    activated_zones.add((pos[0] + dr, pos[1] + dc))
+
+        # Activate/deactivate sprinklers
+        for pos, sprinkler in self.sprinklers.items():
+            should_activate = any(
+                abs(pos[0] - zone[0]) <= self.coverage_radius and
+                abs(pos[1] - zone[1]) <= self.coverage_radius
+                for zone in activated_zones
+            )
+
+            if should_activate and sprinkler['water_level'] > 0:
+                if not sprinkler['active']:
+                    sprinkler['active'] = True
+                    sprinkler['activation_time'] = time_val
+
+                # Consume water
+                sprinkler['water_level'] -= 5 * dt
+
+                # Generate water particles
+                if random.random() < 0.7:
+                    for _ in range(3):
+                        self.water_particles.append({
+                            'x': pos[1] * TILE + random.randint(0, TILE),
+                            'y': pos[0] * TILE + 4,
+                            'vx': random.uniform(-30, 30),
+                            'vy': random.uniform(40, 80),
+                            'life': random.uniform(0.3, 0.6),
+                            'size': random.randint(2, 4)
+                        })
+            else:
+                sprinkler['active'] = False
+
+        # Update water particles
+        for p in self.water_particles[:]:
+            p['x'] += p['vx'] * dt
+            p['y'] += p['vy'] * dt
+            p['vy'] += 150 * dt  # Gravity
+            p['life'] -= dt
+            if p['life'] <= 0 or p['y'] > ROWS * TILE:
+                self.water_particles.remove(p)
+
+        return activated_zones
+
+    def suppress_fire(self, hazards, dt):
+        """Reduce fire intensity in sprinkler coverage areas."""
+        to_remove = []
+        for pos, info in hazards.items():
+            if info['type'] == 'fire':
+                # Check if any active sprinkler covers this position
+                for spr_pos, sprinkler in self.sprinklers.items():
+                    if sprinkler['active']:
+                        dist = abs(pos[0] - spr_pos[0]) + abs(pos[1] - spr_pos[1])
+                        if dist <= self.coverage_radius:
+                            info['intensity'] -= self.suppression_rate * dt
+                            if info['intensity'] <= 0:
+                                to_remove.append(pos)
+                            break
+        return to_remove
+
+    def draw(self, surface, shake, time_val):
+        """Draw sprinklers and water effects."""
+        for pos, sprinkler in self.sprinklers.items():
+            x = int(pos[1] * TILE + TILE // 2 + shake[0])
+            y = int(pos[0] * TILE + 4 + shake[1])
+
+            if sprinkler['active']:
+                # Active sprinkler head (pulsing blue)
+                pulse = abs(math.sin(time_val * 10)) * 0.5 + 0.5
+                color = (int(100 * pulse), int(150 + 50 * pulse), 255)
+
+                # Sprinkler head
+                pygame.gfxdraw.filled_circle(surface, x, y, 5, color)
+                pygame.gfxdraw.aacircle(surface, x, y, 5, (200, 220, 255))
+
+                # Water spray cone effect
+                spray_surf = pygame.Surface((TILE * 2, TILE * 2), pygame.SRCALPHA)
+                for i in range(8):
+                    angle = math.pi / 2 + math.sin(time_val * 15 + i) * 0.3
+                    length = TILE + random.randint(-5, 5)
+                    ex = TILE + int(math.cos(angle + i * 0.2 - 0.7) * length)
+                    ey = 5 + int(math.sin(angle) * length)
+                    pygame.draw.line(spray_surf, (100, 180, 255, 100), (TILE, 5), (ex, ey), 2)
+                surface.blit(spray_surf, (x - TILE, y - 5))
+
+                # Mist effect
+                for _ in range(2):
+                    mx = x + random.randint(-TILE, TILE)
+                    my = y + random.randint(5, TILE)
+                    pygame.gfxdraw.filled_circle(surface, mx, my, random.randint(2, 4),
+                                                (200, 220, 255, 40))
+            else:
+                # Inactive sprinkler head
+                pygame.gfxdraw.filled_circle(surface, x, y, 4, (80, 80, 90))
+                pygame.gfxdraw.aacircle(surface, x, y, 4, (120, 120, 130))
+
+        # Draw water droplets
+        for p in self.water_particles:
+            px = int(p['x'] + shake[0])
+            py = int(p['y'] + shake[1])
+            size = p['size']
+            alpha = min(255, int(p['life'] * 500))
+
+            # Water droplet with glow
+            pygame.gfxdraw.filled_circle(surface, px, py, size, (100, 180, 255, alpha))
+            pygame.gfxdraw.aacircle(surface, px, py, size, (150, 200, 255, alpha))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # DISASTERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -3124,6 +3353,280 @@ class AlarmSystem:
         self.active = False
         self.flash_state = False
         sound_system.stop_alarm()
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# RESCUE HELPER SYSTEM
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class Rescuer:
+    """
+    Emergency rescue helper that responds to hurt people.
+    Jumps in from exits to help injured civilians.
+    """
+    def __init__(self, rid, start_row, start_col):
+        self.id = rid
+        self.row = start_row
+        self.col = start_col
+        self.x = start_col * TILE + TILE // 2
+        self.y = start_row * TILE + TILE // 2
+        self.tx = self.x
+        self.ty = self.y
+
+        self.target_person = None
+        self.state = 'idle'  # 'idle', 'responding', 'rescuing', 'returning'
+        self.path = []
+        self.path_index = 0
+        self.moving = False
+        self.speed = 150  # Fast!
+
+        self.walk_frame = 0
+        self.rescue_timer = 0
+        self.helped_count = 0
+
+        # Animation
+        self.jump_offset = 0
+        self.spawn_time = 0
+
+    def find_hurt_person(self, people):
+        """Find the most critically hurt person nearby."""
+        best_target = None
+        best_priority = float('inf')
+
+        for p in people:
+            if p.alive and not p.escaped and p.health < 70 and p.health > 0:
+                # Check if not already being rescued
+                if hasattr(p, 'being_rescued') and p.being_rescued:
+                    continue
+
+                # Priority: lower health = higher priority
+                dist = abs(self.row - p.row) + abs(self.col - p.col)
+                priority = p.health + dist * 0.5
+
+                if priority < best_priority:
+                    best_priority = priority
+                    best_target = p
+
+        return best_target
+
+    def update(self, dt, maze, people, pathfinder, hazards, time_val):
+        self.spawn_time += dt
+
+        # Jump animation when spawning
+        if self.spawn_time < 0.5:
+            self.jump_offset = math.sin(self.spawn_time * math.pi * 2) * 20
+        else:
+            self.jump_offset = 0
+
+        if self.state == 'idle':
+            # Look for hurt people
+            target = self.find_hurt_person(people)
+            if target:
+                self.target_person = target
+                target.being_rescued = True
+                self.state = 'responding'
+                self.path = pathfinder.find_path((self.row, self.col), (target.row, target.col), maze, hazards)
+                self.path_index = 0
+                sound_system.play('rescue', 0.4)
+
+        elif self.state == 'responding':
+            if not self.target_person or not self.target_person.alive or self.target_person.escaped:
+                self.state = 'idle'
+                if self.target_person:
+                    self.target_person.being_rescued = False
+                self.target_person = None
+                return
+
+            # Move toward target
+            if not self.moving:
+                # Check if reached target
+                dist = abs(self.row - self.target_person.row) + abs(self.col - self.target_person.col)
+                if dist <= 1:
+                    self.state = 'rescuing'
+                    self.rescue_timer = 0
+                    return
+
+                # Update path if target moved
+                if self.path_index >= len(self.path) or not self.path:
+                    self.path = pathfinder.find_path((self.row, self.col),
+                                                     (self.target_person.row, self.target_person.col),
+                                                     maze, hazards)
+                    self.path_index = 0
+
+                if self.path and self.path_index < len(self.path):
+                    next_pos = self.path[self.path_index]
+                    nr, nc = next_pos
+
+                    # Skip hazards
+                    if (nr, nc) in hazards:
+                        self.path = pathfinder.find_path((self.row, self.col),
+                                                         (self.target_person.row, self.target_person.col),
+                                                         maze, hazards)
+                        self.path_index = 0
+                        return
+
+                    self.tx = nc * TILE + TILE // 2
+                    self.ty = nr * TILE + TILE // 2
+                    self.row, self.col = nr, nc
+                    self.path_index += 1
+                    self.moving = True
+
+        elif self.state == 'rescuing':
+            self.rescue_timer += dt
+
+            # Heal the person
+            if self.target_person and self.target_person.alive:
+                self.target_person.health = min(100, self.target_person.health + 50 * dt)
+
+                # Done rescuing when health is restored
+                if self.target_person.health >= 90 or self.rescue_timer > 3.0:
+                    self.target_person.being_rescued = False
+                    self.helped_count += 1
+                    sound_system.play('escape', 0.3)  # Success sound
+                    self.state = 'idle'
+                    self.target_person = None
+            else:
+                self.state = 'idle'
+                self.target_person = None
+
+        # Movement animation
+        if self.moving:
+            self.walk_frame += dt * 15
+            dx = self.tx - self.x
+            dy = self.ty - self.y
+            dist = math.hypot(dx, dy)
+
+            if dist < 2:
+                self.x, self.y = self.tx, self.ty
+                self.moving = False
+            else:
+                self.x += (dx / dist) * self.speed * dt
+                self.y += (dy / dist) * self.speed * dt
+
+    def draw(self, surface, shake, time_val):
+        x = int(self.x + shake[0])
+        y = int(self.y + shake[1]) - int(self.jump_offset)
+
+        scale = 2.0
+
+        # Shadow
+        shadow_y = int(self.y + shake[1]) + int(8 * scale)
+        shadow_w = int(20 * scale)
+        pygame.draw.ellipse(surface, (20, 20, 25, 80),
+                           (x - shadow_w // 2, shadow_y, shadow_w, int(8 * scale)))
+
+        # Rescuer colors - bright red/white emergency colors
+        body_color = (220, 50, 50)  # Red
+        body_light = (255, 100, 100)
+        body_dark = (180, 30, 30)
+        cross_color = (255, 255, 255)
+
+        # Legs
+        leg_w, leg_h = int(6 * scale), int(12 * scale)
+        walk_offset = math.sin(self.walk_frame) * 4 * scale if self.moving else 0
+
+        for leg_side in [-1, 1]:
+            leg_x = x + leg_side * int(4 * scale)
+            leg_offset = walk_offset * leg_side
+            pygame.draw.ellipse(surface, (40, 40, 50),
+                              (leg_x - leg_w // 2, y + int(leg_offset), leg_w, leg_h))
+
+        # Body
+        torso_w, torso_h = int(18 * scale), int(20 * scale)
+        torso_y = y - int(8 * scale)
+
+        pygame.gfxdraw.filled_ellipse(surface, x, torso_y, torso_w // 2, torso_h // 2, body_dark)
+        pygame.gfxdraw.filled_ellipse(surface, x, torso_y, torso_w // 2 - 2, torso_h // 2 - 2, body_color)
+        pygame.gfxdraw.aaellipse(surface, x, torso_y, torso_w // 2, torso_h // 2, body_light)
+
+        # Medical cross on chest
+        cross_size = int(6 * scale)
+        pygame.draw.rect(surface, cross_color, (x - cross_size // 2, torso_y - cross_size, cross_size // 3, cross_size))
+        pygame.draw.rect(surface, cross_color, (x - cross_size // 2, torso_y - cross_size // 2 - cross_size // 6, cross_size, cross_size // 3))
+
+        # Arms
+        arm_swing = math.sin(self.walk_frame + 0.5) * 4 * scale if self.moving else 0
+        for arm_side in [-1, 1]:
+            arm_x = x + arm_side * (torso_w // 2)
+            arm_y = torso_y + int(arm_swing * arm_side)
+            pygame.draw.ellipse(surface, body_color, (arm_x - int(3 * scale), arm_y - int(6 * scale), int(6 * scale), int(14 * scale)))
+
+        # Head with helmet
+        head_radius = int(10 * scale)
+        head_y = torso_y - torso_h // 2 - head_radius + int(4 * scale)
+
+        # Helmet (white with red cross)
+        pygame.gfxdraw.filled_ellipse(surface, x, head_y, head_radius + 2, head_radius + 2, (200, 200, 200))
+        pygame.gfxdraw.filled_ellipse(surface, x, head_y, head_radius, head_radius, (240, 240, 240))
+        pygame.gfxdraw.aaellipse(surface, x, head_y, head_radius, head_radius, (255, 255, 255))
+
+        # Cross on helmet
+        pygame.draw.rect(surface, (220, 50, 50), (x - int(2 * scale), head_y - int(6 * scale), int(4 * scale), int(8 * scale)))
+        pygame.draw.rect(surface, (220, 50, 50), (x - int(4 * scale), head_y - int(4 * scale), int(8 * scale), int(4 * scale)))
+
+        # Face visor
+        pygame.gfxdraw.filled_ellipse(surface, x, head_y + int(2 * scale), int(6 * scale), int(4 * scale), (50, 50, 60))
+
+        # Status indicator
+        if self.state == 'responding':
+            # Flashing light
+            flash = abs(math.sin(time_val * 8))
+            pygame.gfxdraw.filled_circle(surface, x, head_y - head_radius - int(5 * scale), int(4 * scale),
+                                        (255, int(50 + 200 * flash), 50))
+        elif self.state == 'rescuing':
+            # Healing effect
+            for i in range(3):
+                angle = time_val * 5 + i * 2.1
+                hx = x + int(math.cos(angle) * 15)
+                hy = torso_y + int(math.sin(angle) * 15)
+                pygame.gfxdraw.filled_circle(surface, hx, hy, 3, (100, 255, 100, 150))
+
+        # "MEDIC" text above
+        font = pygame.font.Font(None, 16)
+        text = font.render("MEDIC", True, (255, 255, 255))
+        text_rect = text.get_rect(center=(x, head_y - head_radius - int(15 * scale)))
+        # Background
+        pygame.draw.rect(surface, (220, 50, 50), (text_rect.x - 2, text_rect.y - 1, text_rect.width + 4, text_rect.height + 2))
+        surface.blit(text, text_rect)
+
+
+class RescueSystem:
+    """Manages multiple rescuers responding to emergencies."""
+    def __init__(self):
+        self.rescuers = []
+        self.spawn_cooldown = 0
+        self.max_rescuers = 3
+
+    def update(self, dt, maze, exits, people, pathfinder, hazards, time_val, alarm_active):
+        # Update existing rescuers
+        for rescuer in self.rescuers:
+            rescuer.update(dt, maze, people, pathfinder, hazards, time_val)
+
+        # Spawn new rescuers if needed and alarm is active
+        if alarm_active:
+            self.spawn_cooldown -= dt
+
+            # Count people needing help
+            hurt_count = sum(1 for p in people if p.alive and not p.escaped and p.health < 50
+                           and not getattr(p, 'being_rescued', False))
+
+            # Spawn rescuer if hurt people and we have capacity
+            if hurt_count > 0 and len(self.rescuers) < self.max_rescuers and self.spawn_cooldown <= 0:
+                # Spawn from random exit
+                if exits:
+                    exit_pos = random.choice(exits)
+                    new_rescuer = Rescuer(len(self.rescuers), exit_pos[0], exit_pos[1])
+                    self.rescuers.append(new_rescuer)
+                    self.spawn_cooldown = 5.0  # 5 second cooldown between spawns
+                    sound_system.play('rescue', 0.5)
+
+    def draw(self, surface, shake, time_val):
+        for rescuer in self.rescuers:
+            rescuer.draw(surface, shake, time_val)
+
+    def reset(self):
+        self.rescuers = []
+        self.spawn_cooldown = 0
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # BUILDING GENERATION
@@ -3392,123 +3895,323 @@ class Person:
         x = int(self.x + shake[0])
         y = int(self.y + shake[1])
 
-        # Enhanced shadow with gradient effect (ellipse with anti-aliasing)
-        shadow_surf = pygame.Surface((16, 8), pygame.SRCALPHA)
-        for i in range(4):
-            alpha = 60 - i * 15
-            pygame.draw.ellipse(shadow_surf, (20, 20, 25, alpha), (i, i // 2, 16 - i * 2, 8 - i))
-        surface.blit(shadow_surf, (x - 8, y + 6))
+        # Scale factor for larger, more detailed humans
+        scale = 1.8
 
-        # Body outline based on state - get colors for shading
+        # Enhanced shadow with soft gradient
+        shadow_w, shadow_h = int(24 * scale), int(10 * scale)
+        shadow_surf = pygame.Surface((shadow_w + 8, shadow_h + 4), pygame.SRCALPHA)
+        for i in range(6):
+            alpha = 70 - i * 12
+            offset = i * 1
+            pygame.draw.ellipse(shadow_surf, (15, 15, 20, max(0, alpha)),
+                              (offset + 4, offset, shadow_w - offset * 2, shadow_h - offset))
+        surface.blit(shadow_surf, (x - shadow_w // 2 - 4, y + int(4 * scale)))
+
+        # Color scheme based on state
         if self.is_warden:
+            body_color = (255, 200, 50)
+            body_light = (255, 230, 120)
+            body_dark = (200, 150, 20)
             outline = Colors.WARDEN
-            body_light = (255, 225, 100)
-            body_dark = (200, 160, 0)
         elif self.state == STATE_PANICKING:
+            body_color = (255, 80, 80)
+            body_light = (255, 140, 140)
+            body_dark = (180, 40, 40)
             outline = Colors.DANGER
-            body_light = (255, 120, 120)
-            body_dark = (200, 50, 50)
         elif self.state == STATE_EVACUATING:
+            body_color = (80, 220, 100)
+            body_light = (140, 255, 160)
+            body_dark = (40, 160, 60)
             outline = Colors.EVACUATING
-            body_light = (150, 255, 150)
-            body_dark = (60, 200, 60)
         elif self.state == STATE_AWARE:
+            body_color = (255, 240, 80)
+            body_light = (255, 255, 160)
+            body_dark = (200, 180, 40)
             outline = Colors.AWARE
-            body_light = (255, 255, 150)
-            body_dark = (200, 200, 60)
         elif self.state == STATE_HEADPHONES:
+            body_color = (220, 100, 220)
+            body_light = (255, 160, 255)
+            body_dark = (160, 60, 160)
             outline = Colors.HEADPHONES
-            body_light = (255, 150, 255)
-            body_dark = (200, 70, 200)
         else:
-            outline = (60, 60, 70)
-            body_light = (min(255, self.color[0] + 30), min(255, self.color[1] + 30), min(255, self.color[2] + 30))
-            body_dark = (max(0, self.color[0] - 30), max(0, self.color[1] - 30), max(0, self.color[2] - 30))
+            body_color = self.color
+            body_light = (min(255, self.color[0] + 50), min(255, self.color[1] + 50), min(255, self.color[2] + 50))
+            body_dark = (max(0, self.color[0] - 50), max(0, self.color[1] - 50), max(0, self.color[2] - 50))
+            outline = (50, 50, 60)
 
-        # Legs with 3D shading
-        leg_light = (60, 60, 70)
-        leg_dark = (30, 30, 40)
-        leg_w, leg_h = 4, 10
-
-        if self.moving:
-            offset = math.sin(self.walk_frame) * 3
-            # Left leg
-            pygame.draw.ellipse(surface, leg_dark, (x - 5 + int(offset), y - 2, leg_w, leg_h))
-            pygame.draw.ellipse(surface, leg_light, (x - 5 + int(offset), y - 2, leg_w - 1, leg_h - 1))
-            # Right leg
-            pygame.draw.ellipse(surface, leg_dark, (x + 1 - int(offset), y - 2, leg_w, leg_h))
-            pygame.draw.ellipse(surface, leg_light, (x + 1 - int(offset), y - 2, leg_w - 1, leg_h - 1))
-        else:
-            pygame.draw.ellipse(surface, leg_dark, (x - 5, y - 2, leg_w, leg_h))
-            pygame.draw.ellipse(surface, leg_light, (x - 5, y - 2, leg_w - 1, leg_h - 1))
-            pygame.draw.ellipse(surface, leg_dark, (x + 1, y - 2, leg_w, leg_h))
-            pygame.draw.ellipse(surface, leg_light, (x + 1, y - 2, leg_w - 1, leg_h - 1))
-
-        # Body - 3D rounded shape
-        body_w, body_h = 14, 14
-
-        # Body shadow/outline
-        pygame.gfxdraw.filled_ellipse(surface, x, y - 8, body_w // 2 + 1, body_h // 2 + 1, outline)
-        pygame.gfxdraw.aaellipse(surface, x, y - 8, body_w // 2 + 1, body_h // 2 + 1, outline)
-
-        # Body main with gradient effect
-        pygame.gfxdraw.filled_ellipse(surface, x, y - 8, body_w // 2, body_h // 2, self.color)
-        pygame.gfxdraw.aaellipse(surface, x, y - 8, body_w // 2, body_h // 2, body_light)
-
-        # Body highlight (3D effect)
-        pygame.gfxdraw.filled_ellipse(surface, x - 2, y - 10, 3, 4, body_light)
-
-        # Head - smooth 3D circle
-        head_radius = 7
-
-        # Head shadow
-        pygame.gfxdraw.filled_ellipse(surface, x, y - 18, head_radius + 1, head_radius + 1, outline)
-        pygame.gfxdraw.aaellipse(surface, x, y - 18, head_radius + 1, head_radius + 1, outline)
-
-        # Head skin with gradient
+        # Skin tones
         skin_base = (235, 195, 165)
-        skin_light = (255, 220, 195)
-        pygame.gfxdraw.filled_ellipse(surface, x, y - 18, head_radius, head_radius, skin_base)
-        pygame.gfxdraw.aaellipse(surface, x, y - 18, head_radius, head_radius, skin_light)
+        skin_light = (255, 225, 200)
+        skin_shadow = (200, 160, 130)
+
+        # === LEGS ===
+        leg_w, leg_h = int(6 * scale), int(14 * scale)
+        leg_spacing = int(4 * scale)
+        pants_color = (50, 60, 80)
+        pants_light = (70, 80, 100)
+        pants_dark = (30, 40, 60)
+        shoe_color = (40, 35, 35)
+
+        walk_offset = math.sin(self.walk_frame) * 4 * scale if self.moving else 0
+
+        for leg_side in [-1, 1]:
+            leg_x = x + leg_side * leg_spacing
+            leg_offset = walk_offset * leg_side
+
+            # Pants/leg
+            leg_rect = (leg_x - leg_w // 2, y - int(2 * scale) + int(leg_offset), leg_w, leg_h)
+            pygame.draw.ellipse(surface, pants_dark, leg_rect)
+            pygame.draw.ellipse(surface, pants_color, (leg_rect[0] + 1, leg_rect[1] + 1, leg_w - 2, leg_h - 2))
+
+            # Pants highlight
+            pygame.draw.ellipse(surface, pants_light, (leg_rect[0] + 2, leg_rect[1] + 2, leg_w // 2, leg_h // 3))
+
+            # Shoe
+            shoe_y = y + int(10 * scale) + int(leg_offset)
+            pygame.gfxdraw.filled_ellipse(surface, leg_x, shoe_y, int(4 * scale), int(3 * scale), shoe_color)
+            pygame.gfxdraw.aaellipse(surface, leg_x, shoe_y, int(4 * scale), int(3 * scale), (60, 55, 55))
+
+        # === TORSO ===
+        torso_w, torso_h = int(16 * scale), int(18 * scale)
+        torso_y = y - int(10 * scale)
+
+        # Torso shadow/outline
+        pygame.gfxdraw.filled_ellipse(surface, x, torso_y, torso_w // 2 + 2, torso_h // 2 + 2, outline)
+        pygame.gfxdraw.aaellipse(surface, x, torso_y, torso_w // 2 + 2, torso_h // 2 + 2, outline)
+
+        # Main torso with gradient effect
+        for i in range(torso_h // 2, 0, -1):
+            ratio = i / (torso_h // 2)
+            r = int(body_dark[0] + (body_color[0] - body_dark[0]) * ratio)
+            g = int(body_dark[1] + (body_color[1] - body_dark[1]) * ratio)
+            b = int(body_dark[2] + (body_color[2] - body_dark[2]) * ratio)
+            pygame.gfxdraw.filled_ellipse(surface, x, torso_y, int(torso_w // 2 * ratio) + 1, i, (r, g, b))
+
+        # Torso highlight (3D shine)
+        pygame.gfxdraw.filled_ellipse(surface, x - int(3 * scale), torso_y - int(4 * scale),
+                                     int(4 * scale), int(5 * scale), body_light)
+
+        # Collar detail
+        pygame.gfxdraw.filled_ellipse(surface, x, torso_y - torso_h // 2 + int(2 * scale),
+                                     int(5 * scale), int(3 * scale), skin_shadow)
+
+        # === ARMS ===
+        arm_w, arm_h = int(5 * scale), int(12 * scale)
+        arm_swing = math.sin(self.walk_frame + 0.5) * 3 * scale if self.moving else 0
+
+        for arm_side in [-1, 1]:
+            arm_x = x + arm_side * (torso_w // 2 + int(1 * scale))
+            arm_y = torso_y + int(arm_swing * arm_side)
+
+            # Upper arm (shirt color)
+            pygame.draw.ellipse(surface, body_dark, (arm_x - arm_w // 2, arm_y - arm_h // 2, arm_w, arm_h))
+            pygame.draw.ellipse(surface, body_color, (arm_x - arm_w // 2 + 1, arm_y - arm_h // 2 + 1, arm_w - 2, arm_h - 2))
+
+            # Hand
+            hand_y = arm_y + arm_h // 2
+            pygame.gfxdraw.filled_ellipse(surface, arm_x, hand_y, int(3 * scale), int(4 * scale), skin_base)
+            pygame.gfxdraw.aaellipse(surface, arm_x, hand_y, int(3 * scale), int(4 * scale), skin_light)
+
+        # === HEAD ===
+        head_radius = int(10 * scale)
+        head_y = torso_y - torso_h // 2 - head_radius + int(3 * scale)
+
+        # Neck
+        pygame.gfxdraw.filled_ellipse(surface, x, head_y + head_radius - int(2 * scale),
+                                     int(4 * scale), int(5 * scale), skin_shadow)
+
+        # Head shadow/outline
+        pygame.gfxdraw.filled_ellipse(surface, x, head_y, head_radius + 2, head_radius + 2, outline)
+        pygame.gfxdraw.aaellipse(surface, x, head_y, head_radius + 2, head_radius + 2, outline)
+
+        # Head with gradient
+        for i in range(head_radius, 0, -1):
+            ratio = i / head_radius
+            r = int(skin_shadow[0] + (skin_base[0] - skin_shadow[0]) * ratio)
+            g = int(skin_shadow[1] + (skin_base[1] - skin_shadow[1]) * ratio)
+            b = int(skin_shadow[2] + (skin_base[2] - skin_shadow[2]) * ratio)
+            pygame.gfxdraw.filled_ellipse(surface, x, head_y, i, i, (r, g, b))
 
         # Head highlight
-        pygame.gfxdraw.filled_ellipse(surface, x - 2, y - 20, 2, 3, skin_light)
+        pygame.gfxdraw.filled_ellipse(surface, x - int(3 * scale), head_y - int(3 * scale),
+                                     int(4 * scale), int(4 * scale), skin_light)
 
-        # Eyes (small dots)
-        pygame.gfxdraw.filled_circle(surface, x - 2, y - 18, 1, (40, 40, 50))
-        pygame.gfxdraw.filled_circle(surface, x + 2, y - 18, 1, (40, 40, 50))
+        # Hair (simple cap style)
+        hair_color = random.Random(self.id).choice([(40, 30, 20), (80, 50, 30), (30, 30, 35), (150, 100, 50)])
+        pygame.gfxdraw.filled_ellipse(surface, x, head_y - int(2 * scale),
+                                     head_radius - 1, int(head_radius * 0.7), hair_color)
 
-        # Warden hat (3D cap)
+        # === FACE ===
+        eye_y = head_y + int(1 * scale)
+        eye_spacing = int(4 * scale)
+
+        # Eyes with detail
+        for eye_side in [-1, 1]:
+            eye_x = x + eye_side * eye_spacing
+
+            # Eye white
+            pygame.gfxdraw.filled_ellipse(surface, eye_x, eye_y, int(3 * scale), int(2 * scale), (255, 255, 255))
+
+            # Pupil
+            pupil_offset = int(0.5 * scale) if self.moving else 0
+            pygame.gfxdraw.filled_circle(surface, eye_x + pupil_offset, eye_y, int(1.5 * scale), (40, 40, 50))
+
+            # Eye shine
+            pygame.gfxdraw.filled_circle(surface, eye_x - 1, eye_y - 1, 1, (255, 255, 255))
+
+        # Eyebrows
+        brow_y = eye_y - int(3 * scale)
+        if self.state == STATE_PANICKING:
+            # Worried eyebrows
+            pygame.draw.line(surface, hair_color, (x - eye_spacing - 2, brow_y + 1),
+                           (x - eye_spacing + 3, brow_y - 1), 2)
+            pygame.draw.line(surface, hair_color, (x + eye_spacing - 3, brow_y - 1),
+                           (x + eye_spacing + 2, brow_y + 1), 2)
+        else:
+            # Normal eyebrows
+            pygame.draw.line(surface, hair_color, (x - eye_spacing - 2, brow_y),
+                           (x - eye_spacing + 3, brow_y), 2)
+            pygame.draw.line(surface, hair_color, (x + eye_spacing - 3, brow_y),
+                           (x + eye_spacing + 2, brow_y), 2)
+
+        # Mouth
+        mouth_y = head_y + int(5 * scale)
+        if self.state == STATE_PANICKING:
+            # Open mouth (scared)
+            pygame.gfxdraw.filled_ellipse(surface, x, mouth_y, int(3 * scale), int(2 * scale), (60, 30, 30))
+        elif self.state == STATE_EVACUATING:
+            # Determined expression
+            pygame.draw.line(surface, (150, 100, 100), (x - int(3 * scale), mouth_y),
+                           (x + int(3 * scale), mouth_y), 2)
+        else:
+            # Neutral/slight smile
+            pygame.draw.arc(surface, (180, 120, 120),
+                          (x - int(3 * scale), mouth_y - int(2 * scale), int(6 * scale), int(4 * scale)),
+                          0.2, math.pi - 0.2, 2)
+
+        # === ACCESSORIES ===
+
+        # Warden hat
         if self.is_warden:
-            hat_color = Colors.WARDEN
-            hat_dark = (200, 160, 0)
+            hat_y = head_y - head_radius - int(2 * scale)
             # Hat brim
-            pygame.gfxdraw.filled_ellipse(surface, x, y - 24, 8, 3, hat_dark)
-            pygame.gfxdraw.aaellipse(surface, x, y - 24, 8, 3, hat_color)
+            pygame.gfxdraw.filled_ellipse(surface, x, hat_y + int(4 * scale),
+                                         int(12 * scale), int(4 * scale), (180, 140, 0))
+            pygame.gfxdraw.aaellipse(surface, x, hat_y + int(4 * scale),
+                                    int(12 * scale), int(4 * scale), Colors.WARDEN)
             # Hat top
-            pygame.draw.rect(surface, hat_color, (x - 5, y - 28, 10, 4))
-            pygame.draw.rect(surface, (255, 230, 100), (x - 4, y - 28, 8, 2))
+            pygame.draw.rect(surface, Colors.WARDEN,
+                           (x - int(8 * scale), hat_y - int(4 * scale), int(16 * scale), int(8 * scale)))
+            pygame.draw.rect(surface, (255, 230, 100),
+                           (x - int(7 * scale), hat_y - int(3 * scale), int(14 * scale), int(3 * scale)))
+            # Badge
+            pygame.gfxdraw.filled_circle(surface, x, hat_y, int(2 * scale), (255, 255, 200))
 
-        # Headphones indicator
+        # Headphones
         if self.state == STATE_HEADPHONES:
-            pygame.gfxdraw.filled_circle(surface, x - 6, y - 18, 3, (80, 80, 90))
-            pygame.gfxdraw.aacircle(surface, x - 6, y - 18, 3, (100, 100, 110))
-            pygame.gfxdraw.filled_circle(surface, x + 6, y - 18, 3, (80, 80, 90))
-            pygame.gfxdraw.aacircle(surface, x + 6, y - 18, 3, (100, 100, 110))
-            pygame.draw.arc(surface, (60, 60, 70), (x - 6, y - 26, 12, 10), 0, math.pi, 2)
+            hp_color = (50, 50, 60)
+            hp_light = (80, 80, 90)
+            # Ear cups
+            for side in [-1, 1]:
+                cup_x = x + side * (head_radius + int(2 * scale))
+                pygame.gfxdraw.filled_ellipse(surface, cup_x, eye_y, int(4 * scale), int(5 * scale), hp_color)
+                pygame.gfxdraw.aaellipse(surface, cup_x, eye_y, int(4 * scale), int(5 * scale), hp_light)
+                pygame.gfxdraw.filled_ellipse(surface, cup_x, eye_y, int(2 * scale), int(3 * scale), (30, 30, 35))
+            # Headband
+            pygame.draw.arc(surface, hp_color,
+                          (x - head_radius - int(2 * scale), head_y - head_radius - int(4 * scale),
+                           (head_radius + int(2 * scale)) * 2, int(12 * scale)),
+                          0.1, math.pi - 0.1, 3)
 
-        # Health bar with 3D effect
+        # === HEALTH BAR ===
         if self.health < 90:
-            bar_w = int(12 * self.health / 100)
-            # Bar background
-            pygame.draw.rect(surface, (80, 20, 20), (x - 7, y - 32, 14, 4))
-            pygame.draw.rect(surface, (150, 30, 30), (x - 6, y - 31, 12, 2))
+            bar_w = int(20 * scale)
+            bar_h = int(4 * scale)
+            bar_y = head_y - head_radius - int(12 * scale)
+            if self.is_warden:
+                bar_y -= int(10 * scale)
+
+            # Background
+            pygame.draw.rect(surface, (40, 10, 10), (x - bar_w // 2 - 1, bar_y - 1, bar_w + 2, bar_h + 2))
+            pygame.draw.rect(surface, (100, 20, 20), (x - bar_w // 2, bar_y, bar_w, bar_h))
+
             # Health fill
-            if bar_w > 0:
-                health_color = (50, 200, 50) if self.health > 50 else (200, 200, 50) if self.health > 25 else (200, 50, 50)
-                pygame.draw.rect(surface, health_color, (x - 6, y - 31, bar_w, 2))
+            fill_w = int(bar_w * self.health / 100)
+            if fill_w > 0:
+                if self.health > 60:
+                    health_color = (50, 200, 50)
+                elif self.health > 30:
+                    health_color = (200, 200, 50)
+                else:
+                    health_color = (200, 50, 50)
+                pygame.draw.rect(surface, health_color, (x - bar_w // 2, bar_y, fill_w, bar_h))
+
             # Highlight
-            pygame.draw.line(surface, (255, 255, 255, 100), (x - 6, y - 32), (x + 5, y - 32), 1)
+            pygame.draw.line(surface, (255, 255, 255), (x - bar_w // 2, bar_y), (x + bar_w // 2, bar_y), 1)
+
+        # === STATE INDICATOR (floating icon) ===
+        if self.state == STATE_EVACUATING:
+            # Running icon above head
+            icon_y = head_y - head_radius - int(8 * scale)
+            pygame.gfxdraw.filled_circle(surface, x, icon_y, int(3 * scale), (100, 255, 150, 180))
+        elif self.state == STATE_PANICKING:
+            # Exclamation mark
+            icon_y = head_y - head_radius - int(10 * scale)
+            pygame.draw.rect(surface, (255, 100, 100), (x - 2, icon_y, 4, int(6 * scale)))
+            pygame.gfxdraw.filled_circle(surface, x, icon_y + int(8 * scale), 2, (255, 100, 100))
+
+        # === "NEEDS HELP" INDICATOR FOR HURT PEOPLE ===
+        if self.health < 70 and self.health > 0:
+            help_y = head_y - head_radius - int(25 * scale)
+            if self.is_warden:
+                help_y -= int(10 * scale)
+
+            # Flashing alarm beacon effect
+            flash_intensity = abs(math.sin(time_val * 6))
+            beacon_color = (255, int(50 + 200 * flash_intensity), 50)
+            beacon_size = int(4 * scale + flash_intensity * 2)
+
+            # Draw alarm beacon circle
+            pygame.gfxdraw.filled_circle(surface, x, help_y + int(15 * scale), beacon_size, beacon_color)
+            pygame.gfxdraw.aacircle(surface, x, help_y + int(15 * scale), beacon_size, (255, 255, 200))
+
+            # Pulsing rings around beacon
+            for ring in range(3):
+                ring_alpha = int(150 * (1 - ring / 3) * flash_intensity)
+                ring_radius = beacon_size + int(ring * 3 + flash_intensity * 5)
+                ring_color = (255, 100, 50, ring_alpha)
+                ring_surface = pygame.Surface((ring_radius * 2 + 4, ring_radius * 2 + 4), pygame.SRCALPHA)
+                pygame.gfxdraw.aacircle(ring_surface, ring_radius + 2, ring_radius + 2, ring_radius, ring_color)
+                surface.blit(ring_surface, (x - ring_radius - 2, help_y + int(15 * scale) - ring_radius - 2))
+
+            # Bold "NEEDS HELP" text with background
+            try:
+                font_bold = pygame.font.Font(None, 18)
+            except:
+                font_bold = pygame.font.Font(None, 18)
+            text = font_bold.render("NEEDS HELP", True, (255, 255, 255))
+            text_rect = text.get_rect(center=(x, help_y))
+
+            # Red background box with border
+            bg_rect = (text_rect.x - 4, text_rect.y - 2, text_rect.width + 8, text_rect.height + 4)
+            pygame.draw.rect(surface, (150, 30, 30), bg_rect)
+            pygame.draw.rect(surface, (255, 100, 100), bg_rect, 2)
+            surface.blit(text, text_rect)
+
+            # Being rescued indicator
+            if getattr(self, 'being_rescued', False):
+                rescue_text = font_bold.render("RESCUE INCOMING", True, (150, 255, 150))
+                rescue_rect = rescue_text.get_rect(center=(x, help_y + int(30 * scale)))
+                pygame.draw.rect(surface, (30, 100, 30), (rescue_rect.x - 3, rescue_rect.y - 1, rescue_rect.width + 6, rescue_rect.height + 2))
+                surface.blit(rescue_text, rescue_rect)
+
+            # Play help beep sound periodically
+            if not hasattr(self, '_last_help_beep'):
+                self._last_help_beep = 0
+            if time_val - self._last_help_beep > 2.0:  # Beep every 2 seconds
+                sound_system.play('help_beep', 0.3)
+                self._last_help_beep = time_val
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DRAWING FUNCTIONS
@@ -3743,6 +4446,97 @@ def draw_tile(surface, row, col, maze, hazards, time_val, shake, alarm_flash):
         pulse = abs(math.sin(time_val * 8)) * 0.5 + 0.5
         overlay.fill((255, 30, 30, int(25 * pulse)))
         surface.blit(overlay, (x, y))
+
+def draw_emergency_floor_strobing(surface, neural_aco, shake, time_val, alarm_active):
+    """
+    Draw pheromone-based emergency floor strobing to guide evacuation.
+    Uses safe pheromone trails to create animated light paths toward exits.
+    """
+    if not alarm_active:
+        return
+
+    safe = neural_aco.safe_pheromone
+    danger = neural_aco.danger_pheromone
+
+    # Calculate strobe phase (creates wave effect moving toward exits)
+    strobe_speed = 8
+    wave_length = 0.3
+
+    for r in range(ROWS):
+        for c in range(COLS):
+            safe_level = safe[r, c]
+            danger_level = danger[r, c]
+
+            # Only strobe on safe paths (where safe pheromone is high)
+            if safe_level > 0.4:
+                x = int(c * TILE + shake[0])
+                y = int(r * TILE + shake[1])
+
+                # Calculate directional wave based on pheromone gradient
+                max_safe = safe_level
+                direction = 0
+                for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < ROWS and 0 <= nc < COLS:
+                        if safe[nr, nc] > max_safe:
+                            max_safe = safe[nr, nc]
+                            direction = dr + dc * 0.1
+
+                # Create animated wave pattern
+                wave_phase = (time_val * strobe_speed + (r + c) * wave_length + direction) % (2 * math.pi)
+                strobe_intensity = (math.sin(wave_phase) + 1) / 2
+
+                # Intensity based on safe pheromone strength
+                base_intensity = min((safe_level - 0.4) / 0.6, 1.0)
+                final_intensity = base_intensity * strobe_intensity
+
+                if final_intensity > 0.1:
+                    overlay = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
+
+                    # Green strobing for safe path
+                    green_alpha = int(80 * final_intensity)
+                    overlay.fill((50, 255, 100, green_alpha))
+
+                    # Add LED strip effect (lines on edges)
+                    led_brightness = int(200 * final_intensity)
+                    led_color = (100, 255, 150, led_brightness)
+
+                    # Edge LEDs
+                    pygame.draw.line(overlay, led_color, (0, TILE - 2), (TILE, TILE - 2), 2)
+                    pygame.draw.line(overlay, led_color, (0, 0), (TILE, 0), 2)
+
+                    # Directional arrows for guidance
+                    if (r + c) % 3 == int(time_val * 2) % 3:
+                        arrow_color = (150, 255, 180, int(180 * final_intensity))
+                        cx, cy = TILE // 2, TILE // 2
+                        pygame.draw.polygon(overlay, arrow_color, [
+                            (cx - 4, cy + 3), (cx + 4, cy + 3),
+                            (cx + 4, cy), (cx + 6, cy),
+                            (cx, cy - 5), (cx - 6, cy),
+                            (cx - 4, cy)
+                        ])
+
+                    surface.blit(overlay, (x, y))
+
+            # Danger zone warning strobing (red pulsing)
+            elif danger_level > 1.0:
+                x = int(c * TILE + shake[0])
+                y = int(r * TILE + shake[1])
+
+                danger_pulse = abs(math.sin(time_val * 12)) * min(danger_level / 3.0, 1.0)
+                if danger_pulse > 0.2:
+                    overlay = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
+
+                    # Red warning strobe
+                    red_alpha = int(60 * danger_pulse)
+                    overlay.fill((255, 50, 30, red_alpha))
+
+                    # Warning X pattern
+                    warn_color = (255, 100, 50, int(150 * danger_pulse))
+                    pygame.draw.line(overlay, warn_color, (2, 2), (TILE - 2, TILE - 2), 2)
+                    pygame.draw.line(overlay, warn_color, (TILE - 2, 2), (2, TILE - 2), 2)
+
+                    surface.blit(overlay, (x, y))
 
 def draw_smoke(surface, smoke, shake):
     """Draw volumetric 3D smoke with layered opacity."""
@@ -4120,6 +4914,13 @@ def main():
     people = spawn_people(maze, TOTAL_PEOPLE, NUM_WARDENS)
     soldier_mesh = SoldierMeshNetwork()
 
+    # ML-Activated Sprinkler System
+    sprinkler_system = SprinklerSystem()
+    sprinkler_system.install_sprinklers(maze)
+
+    # Rescue System for injured people
+    rescue_system = RescueSystem()
+
     stats = {'escaped': 0, 'deaths': 0, 'total': TOTAL_PEOPLE}
 
     clock = pygame.time.Clock()
@@ -4188,6 +4989,9 @@ def main():
                     rl_coordinator = RLEvacuationCoordinator()
                     people = spawn_people(maze, TOTAL_PEOPLE, NUM_WARDENS)
                     soldier_mesh = SoldierMeshNetwork()
+                    sprinkler_system = SprinklerSystem()
+                    sprinkler_system.install_sprinklers(maze)
+                    rescue_system.reset()
                     stats = {'escaped': 0, 'deaths': 0, 'total': TOTAL_PEOPLE}
                 elif event.key in [pygame.K_EQUALS, pygame.K_PLUS]:
                     speed = min(speed + 0.5, 5.0)
@@ -4214,6 +5018,17 @@ def main():
             # Update sensors
             people_positions = [(p.row, p.col) for p in people if p.alive and not p.escaped]
             sensor_network.update(dt, disasters.get_fire_positions(), disasters.smoke, people_positions, maze)
+
+            # Update ML-activated sprinkler system
+            fire_positions = disasters.get_fire_positions()
+            predictions = lstm_predictor.predict_spread(fire_positions, {}, maze)
+            sprinkler_system.update(dt, neural_aco, predictions, disasters.hazards, time_val)
+
+            # Sprinklers suppress fire
+            extinguished = sprinkler_system.suppress_fire(disasters.hazards, dt)
+            for pos in extinguished:
+                if pos in disasters.hazards:
+                    del disasters.hazards[pos]
 
             # Update RL coordinator
             rl_update_timer += dt
@@ -4244,6 +5059,9 @@ def main():
             # Update soldier mesh (tactical MANET layer)
             soldier_mesh.update(dt, people, disasters.get_fire_positions(), maze)
 
+            # Update rescue system for injured people
+            rescue_system.update(dt, maze, exits, people, pathfinder, disasters.hazards, time_val, alarm.active)
+
         # RENDER
         screen.fill((30, 32, 38))
         shake = disasters.shake_offset
@@ -4256,6 +5074,9 @@ def main():
 
         # Draw smoke
         draw_smoke(screen, disasters.smoke, shake)
+
+        # Draw emergency floor strobing (pheromone-based evacuation guidance)
+        draw_emergency_floor_strobing(screen, neural_aco, shake, time_val, alarm.active)
 
         # Draw pheromones
         if show_pheromones:
@@ -4271,12 +5092,18 @@ def main():
         if show_sensors:
             sensor_network.draw(screen, shake, time_val)
 
+        # Draw ML-activated sprinkler system
+        sprinkler_system.draw(screen, shake, time_val)
+
         # Draw particles
         disasters.draw_particles(screen, shake)
 
         # Draw people
         for p in sorted(people, key=lambda x: x.y):
             p.draw(screen, shake, time_val)
+
+        # Draw rescue system (medics responding to injured)
+        rescue_system.draw(screen, shake, time_val)
 
         # Draw UI
         draw_panel(screen, stats, neural_aco, sensor_network, rl_coordinator, soldier_mesh, time_val, paused, speed)
