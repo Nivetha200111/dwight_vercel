@@ -1284,6 +1284,29 @@ class Person:
             self.path = pathfinder.find_path((self.row, self.col), best_exit, maze, hazards)
             self.path_index = 0
 
+    def force_open_corridor_door(self, maze):
+        """Emergency: carve a door in the nearest wall that borders a corridor."""
+        best = None
+        best_dist = float('inf')
+        for r in range(ROWS):
+            for c in range(COLS):
+                if maze[r][c] != WALL:
+                    continue
+                # Check if any neighbor is a corridor
+                for dr, dc in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < ROWS and 0 <= nc < COLS and maze[nr][nc] == CORRIDOR:
+                        dist = abs(self.row - r) + abs(self.col - c)
+                        if dist < best_dist:
+                            best_dist = dist
+                            best = (r, c)
+                        break
+        if best:
+            br, bc = best
+            maze[br][bc] = DOOR
+            return True
+        return False
+
     def update(self, dt, maze, exits, hazards, pathfinder, alarm_active, people, smoke, neural_aco):
         if not self.alive or self.escaped:
             return
@@ -1333,6 +1356,10 @@ class Person:
         if not self.moving:
             if self.state in [STATE_EVACUATING, STATE_PANICKING, STATE_WARDEN]:
                 if not self.path or self.path_index >= len(self.path):
+                    self.find_exit(exits, pathfinder, maze, hazards)
+
+                # If still no path, carve an emergency door to a corridor and retry
+                if (not self.path or self.path_index >= len(self.path)) and self.force_open_corridor_door(maze):
                     self.find_exit(exits, pathfinder, maze, hazards)
 
                 if self.path and self.path_index < len(self.path):
