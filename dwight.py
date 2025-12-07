@@ -859,7 +859,7 @@ class Colors:
     EVACUATING = (100, 255, 100)
     PANICKING = (255, 80, 80)
     WARDEN = (255, 215, 0)
-    HEADPHONES = (255, 100, 255)
+    HEADPHONES = (255, 100, 255)  # legacy (headphones state removed)
 
     # UI
     PANEL_BG = (18, 20, 28)
@@ -881,7 +881,7 @@ CARPET = 5
 
 # States
 STATE_WORKING = "working"
-STATE_HEADPHONES = "headphones"
+STATE_HEADPHONES = "headphones"  # legacy / not used
 STATE_AWARE = "aware"
 STATE_EVACUATING = "evacuating"
 STATE_PANICKING = "panicking"
@@ -1248,7 +1248,7 @@ class Person:
 
         self.color = Colors.WARDEN if is_warden else random.choice([
             (255, 90, 90), (90, 160, 255), (90, 255, 90), (255, 230, 90),
-            (255, 90, 255), (90, 255, 255), (255, 160, 90)
+            (90, 255, 255), (255, 160, 90)
         ])
 
         self.walk_frame = 0
@@ -1313,8 +1313,9 @@ class Person:
 
         # Awareness
         if self.state not in [STATE_AWARE, STATE_EVACUATING, STATE_PANICKING, STATE_WARDEN]:
+            # Alarm awareness: immediate if alarm is active
             if alarm_active:
-                self.awareness += 0.15 * dt if self.state != STATE_HEADPHONES else 0.02 * dt
+                self.awareness = 1.0
 
             for h_pos in hazards:
                 dist = abs(self.row - h_pos[0]) + abs(self.col - h_pos[1])
@@ -1392,8 +1393,6 @@ class Person:
             outline = Colors.EVACUATING
         elif self.state == STATE_AWARE:
             outline = Colors.AWARE
-        elif self.state == STATE_HEADPHONES:
-            outline = Colors.HEADPHONES
         else:
             outline = (0, 0, 0)
 
