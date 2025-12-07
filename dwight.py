@@ -2029,7 +2029,7 @@ if not HEADLESS:
 
 ROWS = 45  # Keep rows/cols consistent with original for map generation
 COLS = 70
-TILE = 14
+TILE = 24  # Larger tiles for detailed 3D rendering
 TOTAL_PEOPLE = 60
 NUM_WARDENS = 4
 NUM_SENSORS = 25
@@ -2356,44 +2356,82 @@ class IoTSensorNetwork:
         return data
 
     def draw(self, surface, shake, time_val):
-        """Draw sensors on the map."""
+        """Draw 3D sensors with enhanced glow effects on the map."""
         for sensor in self.sensors.values():
             x = int(sensor.col * TILE + TILE // 2 + shake[0])
             y = int(sensor.row * TILE + TILE // 2 + shake[1])
 
-            # Color based on type and status
+            # Color based on type and status with enhanced palette
             if sensor.health <= 0:
                 color = (60, 60, 60)
+                glow_color = (40, 40, 40)
             elif sensor.triggered:
-                flash = int(abs(math.sin(time_val * 8)) * 255)
+                flash = abs(math.sin(time_val * 8))
+                flash_int = int(flash * 255)
                 if sensor.sensor_type == 'temperature':
-                    color = (255, flash, 0)
+                    color = (255, flash_int, 0)
+                    glow_color = (255, 100, 0, int(flash * 100))
                 elif sensor.sensor_type == 'smoke':
-                    color = (flash, flash, flash)
+                    color = (flash_int, flash_int, flash_int)
+                    glow_color = (200, 200, 200, int(flash * 80))
                 elif sensor.sensor_type == 'co':
-                    color = (255, 0, flash)
+                    color = (255, 0, flash_int)
+                    glow_color = (255, 50, 100, int(flash * 100))
                 else:
-                    color = (0, flash, 255)
+                    color = (0, flash_int, 255)
+                    glow_color = (50, 100, 255, int(flash * 100))
             else:
                 if sensor.sensor_type == 'temperature':
-                    color = (200, 100, 50)
+                    color = (220, 120, 60)
+                    glow_color = (200, 100, 50, 60)
                 elif sensor.sensor_type == 'smoke':
-                    color = (150, 150, 150)
+                    color = (170, 170, 175)
+                    glow_color = (150, 150, 150, 50)
                 elif sensor.sensor_type == 'co':
-                    color = (200, 50, 50)
+                    color = (220, 70, 70)
+                    glow_color = (200, 50, 50, 60)
                 else:
-                    color = (50, 50, 200)
+                    color = (70, 70, 220)
+                    glow_color = (50, 50, 200, 60)
 
-            # Draw sensor icon
-            pygame.draw.circle(surface, color, (x, y), 4)
-            pygame.draw.circle(surface, (255, 255, 255), (x, y), 4, 1)
+            sensor_radius = 6
 
-            # Signal waves if triggered
+            # Outer glow for active sensors
+            if sensor.health > 0:
+                glow_surf = pygame.Surface((sensor_radius * 4 + 8, sensor_radius * 4 + 8), pygame.SRCALPHA)
+                if len(glow_color) == 4:
+                    pygame.gfxdraw.filled_circle(glow_surf, sensor_radius * 2 + 4, sensor_radius * 2 + 4,
+                                                sensor_radius * 2, glow_color)
+                surface.blit(glow_surf, (x - sensor_radius * 2 - 4, y - sensor_radius * 2 - 4))
+
+            # 3D sensor body with gradient effect
+            # Shadow
+            pygame.gfxdraw.filled_circle(surface, x + 1, y + 1, sensor_radius,
+                                        (max(0, color[0] - 80), max(0, color[1] - 80), max(0, color[2] - 80)))
+
+            # Main body
+            pygame.gfxdraw.filled_circle(surface, x, y, sensor_radius, color)
+            pygame.gfxdraw.aacircle(surface, x, y, sensor_radius, color)
+
+            # Highlight
+            pygame.gfxdraw.filled_circle(surface, x - 2, y - 2, sensor_radius // 2,
+                                        (min(255, color[0] + 60), min(255, color[1] + 60), min(255, color[2] + 60)))
+
+            # White border ring
+            pygame.gfxdraw.aacircle(surface, x, y, sensor_radius + 1, (255, 255, 255))
+
+            # Center indicator dot
+            center_color = (255, 255, 255) if sensor.health > 50 else (255, 100, 100)
+            pygame.gfxdraw.filled_circle(surface, x, y, 2, center_color)
+
+            # Signal waves if triggered - enhanced ripple effect
             if sensor.triggered and sensor.health > 0:
-                wave_radius = int((time_val * 20) % 15) + 5
-                alpha = 255 - wave_radius * 10
-                if alpha > 0:
-                    pygame.gfxdraw.aacircle(surface, x, y, wave_radius, (*color[:3], alpha))
+                for wave in range(3):
+                    wave_phase = (time_val * 25 + wave * 5) % 20
+                    wave_radius = int(wave_phase) + sensor_radius + 3
+                    wave_alpha = max(0, 180 - wave_radius * 8)
+                    if wave_alpha > 0:
+                        pygame.gfxdraw.aacircle(surface, x, y, wave_radius, (*color[:3], wave_alpha))
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SOLDIER MESH NETWORK (INDIAN ARMY HANDHELD MESH LAYER)
@@ -2977,16 +3015,18 @@ class Disasters:
                 # Deposit danger pheromone
                 neural_aco.deposit_danger_pheromone((row, col), 2.0 * dt)
 
-                # Fire particles
-                if random.random() < 0.4:
-                    self.particles.append({
-                        'x': col * TILE + random.randint(2, TILE - 2),
-                        'y': row * TILE + TILE,
-                        'vy': -random.uniform(30, 60),
-                        'vx': random.uniform(-10, 10),
-                        'life': random.uniform(0.3, 0.7),
-                        'type': 'fire'
-                    })
+                # Fire particles - more particles for detailed 3D effect
+                if random.random() < 0.6:
+                    # Spawn multiple particles per fire tile for richer effect
+                    for _ in range(2):
+                        self.particles.append({
+                            'x': col * TILE + random.randint(4, TILE - 4),
+                            'y': row * TILE + TILE - random.randint(0, 4),
+                            'vy': -random.uniform(50, 100),
+                            'vx': random.uniform(-15, 15),
+                            'life': random.uniform(0.4, 0.9),
+                            'type': 'fire'
+                        })
 
                 # Spread
                 if info['age'] > 5.0 and random.random() < 0.01:
@@ -3024,18 +3064,39 @@ class Disasters:
         return [pos for pos, info in self.hazards.items() if info['type'] == 'fire']
 
     def draw_particles(self, surface, shake):
+        """Draw enhanced 3D particles with glow effects."""
         for p in self.particles:
             x = int(p['x'] + shake[0])
             y = int(p['y'] + shake[1])
             alpha = min(255, int(p['life'] * 400))
-            size = max(1, int(4 * p['life']))
+            size = max(2, int(6 * p['life']))
 
             if p['type'] == 'fire':
                 t = p['life']
-                r = int(255)
-                g = int(150 + 100 * t)
-                b = int(50 * t)
-                pygame.draw.circle(surface, (r, g, b), (x, y), size)
+                # Multi-layered fire particle for 3D glow
+                layers = [
+                    (size + 3, (255, 80, 0, int(alpha * 0.3))),      # Outer glow
+                    (size + 1, (255, 150, 50, int(alpha * 0.6))),   # Mid glow
+                    (size, (255, 200 + int(55 * t), int(100 * t))),  # Core
+                    (max(1, size - 1), (255, 255, int(200 * t))),   # Hot center
+                ]
+
+                # Draw glow layers
+                for layer_size, color in layers:
+                    if len(color) == 4:  # Has alpha
+                        glow_surf = pygame.Surface((layer_size * 2 + 4, layer_size * 2 + 4), pygame.SRCALPHA)
+                        pygame.gfxdraw.filled_circle(glow_surf, layer_size + 2, layer_size + 2,
+                                                    layer_size, color)
+                        surface.blit(glow_surf, (x - layer_size - 2, y - layer_size - 2))
+                    else:
+                        pygame.gfxdraw.filled_circle(surface, x, y, layer_size, color)
+                        pygame.gfxdraw.aacircle(surface, x, y, layer_size, color)
+
+                # Spark trail
+                if size > 2 and random.random() > 0.7:
+                    spark_x = x + random.randint(-3, 3)
+                    spark_y = y + random.randint(-3, 3)
+                    pygame.gfxdraw.pixel(surface, spark_x, spark_y, (255, 255, 200))
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ALARM SYSTEM
@@ -3307,133 +3368,433 @@ class Person:
         x = int(self.x + shake[0])
         y = int(self.y + shake[1])
 
-        # Shadow
-        pygame.draw.ellipse(surface, (30, 30, 35), (x - 5, y + 4, 10, 5))
+        # Enhanced shadow with gradient effect (ellipse with anti-aliasing)
+        shadow_surf = pygame.Surface((16, 8), pygame.SRCALPHA)
+        for i in range(4):
+            alpha = 60 - i * 15
+            pygame.draw.ellipse(shadow_surf, (20, 20, 25, alpha), (i, i // 2, 16 - i * 2, 8 - i))
+        surface.blit(shadow_surf, (x - 8, y + 6))
 
-        # Legs
-        if self.moving:
-            offset = math.sin(self.walk_frame) * 2
-            pygame.draw.rect(surface, (40, 40, 50), (x - 3 + int(offset), y, 2, 6))
-            pygame.draw.rect(surface, (40, 40, 50), (x + 1 - int(offset), y, 2, 6))
-        else:
-            pygame.draw.rect(surface, (40, 40, 50), (x - 3, y, 2, 6))
-            pygame.draw.rect(surface, (40, 40, 50), (x + 1, y, 2, 6))
-
-        # Body outline based on state
+        # Body outline based on state - get colors for shading
         if self.is_warden:
             outline = Colors.WARDEN
+            body_light = (255, 225, 100)
+            body_dark = (200, 160, 0)
         elif self.state == STATE_PANICKING:
             outline = Colors.DANGER
+            body_light = (255, 120, 120)
+            body_dark = (200, 50, 50)
         elif self.state == STATE_EVACUATING:
             outline = Colors.EVACUATING
+            body_light = (150, 255, 150)
+            body_dark = (60, 200, 60)
         elif self.state == STATE_AWARE:
             outline = Colors.AWARE
+            body_light = (255, 255, 150)
+            body_dark = (200, 200, 60)
         elif self.state == STATE_HEADPHONES:
             outline = Colors.HEADPHONES
+            body_light = (255, 150, 255)
+            body_dark = (200, 70, 200)
         else:
-            outline = (0, 0, 0)
+            outline = (60, 60, 70)
+            body_light = (min(255, self.color[0] + 30), min(255, self.color[1] + 30), min(255, self.color[2] + 30))
+            body_dark = (max(0, self.color[0] - 30), max(0, self.color[1] - 30), max(0, self.color[2] - 30))
 
-        # Body
-        pygame.draw.rect(surface, outline, (x - 5, y - 8, 10, 9))
-        pygame.draw.rect(surface, self.color, (x - 4, y - 7, 8, 7))
+        # Legs with 3D shading
+        leg_light = (60, 60, 70)
+        leg_dark = (30, 30, 40)
+        leg_w, leg_h = 4, 10
 
-        # Head
-        pygame.draw.rect(surface, outline, (x - 4, y - 14, 8, 7))
-        pygame.draw.rect(surface, (230, 190, 160), (x - 3, y - 13, 6, 5))
+        if self.moving:
+            offset = math.sin(self.walk_frame) * 3
+            # Left leg
+            pygame.draw.ellipse(surface, leg_dark, (x - 5 + int(offset), y - 2, leg_w, leg_h))
+            pygame.draw.ellipse(surface, leg_light, (x - 5 + int(offset), y - 2, leg_w - 1, leg_h - 1))
+            # Right leg
+            pygame.draw.ellipse(surface, leg_dark, (x + 1 - int(offset), y - 2, leg_w, leg_h))
+            pygame.draw.ellipse(surface, leg_light, (x + 1 - int(offset), y - 2, leg_w - 1, leg_h - 1))
+        else:
+            pygame.draw.ellipse(surface, leg_dark, (x - 5, y - 2, leg_w, leg_h))
+            pygame.draw.ellipse(surface, leg_light, (x - 5, y - 2, leg_w - 1, leg_h - 1))
+            pygame.draw.ellipse(surface, leg_dark, (x + 1, y - 2, leg_w, leg_h))
+            pygame.draw.ellipse(surface, leg_light, (x + 1, y - 2, leg_w - 1, leg_h - 1))
 
-        # Warden hat
+        # Body - 3D rounded shape
+        body_w, body_h = 14, 14
+
+        # Body shadow/outline
+        pygame.gfxdraw.filled_ellipse(surface, x, y - 8, body_w // 2 + 1, body_h // 2 + 1, outline)
+        pygame.gfxdraw.aaellipse(surface, x, y - 8, body_w // 2 + 1, body_h // 2 + 1, outline)
+
+        # Body main with gradient effect
+        pygame.gfxdraw.filled_ellipse(surface, x, y - 8, body_w // 2, body_h // 2, self.color)
+        pygame.gfxdraw.aaellipse(surface, x, y - 8, body_w // 2, body_h // 2, body_light)
+
+        # Body highlight (3D effect)
+        pygame.gfxdraw.filled_ellipse(surface, x - 2, y - 10, 3, 4, body_light)
+
+        # Head - smooth 3D circle
+        head_radius = 7
+
+        # Head shadow
+        pygame.gfxdraw.filled_ellipse(surface, x, y - 18, head_radius + 1, head_radius + 1, outline)
+        pygame.gfxdraw.aaellipse(surface, x, y - 18, head_radius + 1, head_radius + 1, outline)
+
+        # Head skin with gradient
+        skin_base = (235, 195, 165)
+        skin_light = (255, 220, 195)
+        pygame.gfxdraw.filled_ellipse(surface, x, y - 18, head_radius, head_radius, skin_base)
+        pygame.gfxdraw.aaellipse(surface, x, y - 18, head_radius, head_radius, skin_light)
+
+        # Head highlight
+        pygame.gfxdraw.filled_ellipse(surface, x - 2, y - 20, 2, 3, skin_light)
+
+        # Eyes (small dots)
+        pygame.gfxdraw.filled_circle(surface, x - 2, y - 18, 1, (40, 40, 50))
+        pygame.gfxdraw.filled_circle(surface, x + 2, y - 18, 1, (40, 40, 50))
+
+        # Warden hat (3D cap)
         if self.is_warden:
-            pygame.draw.rect(surface, Colors.WARDEN, (x - 4, y - 16, 8, 2))
+            hat_color = Colors.WARDEN
+            hat_dark = (200, 160, 0)
+            # Hat brim
+            pygame.gfxdraw.filled_ellipse(surface, x, y - 24, 8, 3, hat_dark)
+            pygame.gfxdraw.aaellipse(surface, x, y - 24, 8, 3, hat_color)
+            # Hat top
+            pygame.draw.rect(surface, hat_color, (x - 5, y - 28, 10, 4))
+            pygame.draw.rect(surface, (255, 230, 100), (x - 4, y - 28, 8, 2))
 
-        # Health bar
+        # Headphones indicator
+        if self.state == STATE_HEADPHONES:
+            pygame.gfxdraw.filled_circle(surface, x - 6, y - 18, 3, (80, 80, 90))
+            pygame.gfxdraw.aacircle(surface, x - 6, y - 18, 3, (100, 100, 110))
+            pygame.gfxdraw.filled_circle(surface, x + 6, y - 18, 3, (80, 80, 90))
+            pygame.gfxdraw.aacircle(surface, x + 6, y - 18, 3, (100, 100, 110))
+            pygame.draw.arc(surface, (60, 60, 70), (x - 6, y - 26, 12, 10), 0, math.pi, 2)
+
+        # Health bar with 3D effect
         if self.health < 90:
-            bar_w = int(8 * self.health / 100)
-            pygame.draw.rect(surface, (150, 0, 0), (x - 4, y - 20, 8, 2))
-            pygame.draw.rect(surface, (0, 200, 0), (x - 4, y - 20, bar_w, 2))
+            bar_w = int(12 * self.health / 100)
+            # Bar background
+            pygame.draw.rect(surface, (80, 20, 20), (x - 7, y - 32, 14, 4))
+            pygame.draw.rect(surface, (150, 30, 30), (x - 6, y - 31, 12, 2))
+            # Health fill
+            if bar_w > 0:
+                health_color = (50, 200, 50) if self.health > 50 else (200, 200, 50) if self.health > 25 else (200, 50, 50)
+                pygame.draw.rect(surface, health_color, (x - 6, y - 31, bar_w, 2))
+            # Highlight
+            pygame.draw.line(surface, (255, 255, 255, 100), (x - 6, y - 32), (x + 5, y - 32), 1)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DRAWING FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════════
+
+def draw_gradient_rect(surface, rect, color_top, color_bottom):
+    """Draw a vertical gradient rectangle for 3D effect."""
+    x, y, w, h = rect
+    for i in range(h):
+        ratio = i / max(h - 1, 1)
+        r = int(color_top[0] + (color_bottom[0] - color_top[0]) * ratio)
+        g = int(color_top[1] + (color_bottom[1] - color_top[1]) * ratio)
+        b = int(color_top[2] + (color_bottom[2] - color_top[2]) * ratio)
+        pygame.draw.line(surface, (r, g, b), (x, y + i), (x + w - 1, y + i))
+
+def draw_3d_block(surface, x, y, w, h, top_color, front_color, depth=4):
+    """Draw a 3D raised block with lighting."""
+    # Darker side color
+    side_color = (max(0, front_color[0] - 40), max(0, front_color[1] - 40), max(0, front_color[2] - 40))
+    # Lighter top highlight
+    highlight = (min(255, top_color[0] + 30), min(255, top_color[1] + 30), min(255, top_color[2] + 30))
+
+    # Draw top face with gradient
+    draw_gradient_rect(surface, (x, y, w, h - depth), highlight, top_color)
+
+    # Draw front face (bottom part) with gradient
+    draw_gradient_rect(surface, (x, y + h - depth, w, depth), front_color, side_color)
+
+    # Right edge highlight
+    pygame.draw.line(surface, side_color, (x + w - 1, y), (x + w - 1, y + h - 1), 1)
+
+    # Top edge highlight
+    pygame.draw.line(surface, highlight, (x, y), (x + w - 2, y), 1)
+
+    # Left edge shadow
+    pygame.draw.line(surface, (max(0, top_color[0] - 20), max(0, top_color[1] - 20), max(0, top_color[2] - 20)),
+                     (x, y + 1), (x, y + h - 1), 1)
 
 def draw_tile(surface, row, col, maze, hazards, time_val, shake, alarm_flash):
     x = int(col * TILE + shake[0])
     y = int(row * TILE + shake[1])
     tile = maze[row][col]
 
-    # Fire rendering
+    # Fire rendering - enhanced 3D flames
     if (row, col) in hazards and hazards[(row, col)]['type'] == 'fire':
-        # Fire base
-        pygame.draw.rect(surface, (60, 30, 20), (x, y, TILE, TILE))
+        # Charred ground with gradient
+        draw_gradient_rect(surface, (x, y, TILE, TILE), (80, 40, 25), (40, 20, 10))
 
-        # Animated flames
-        for i in range(3):
-            fx = x + 2 + i * 4
-            fh = 8 + math.sin(time_val * 12 + i + col * 0.5) * 4
+        # Animated 3D flames with multiple layers
+        num_flames = 5
+        for i in range(num_flames):
+            fx = x + 2 + i * (TILE - 4) // num_flames
+            phase = time_val * 15 + i * 1.2 + col * 0.3 + row * 0.2
+            fh = TILE * 0.6 + math.sin(phase) * TILE * 0.25
+            fw = TILE // num_flames + 2
 
-            # Multi-color flame
-            colors = [Colors.FIRE_CORE, Colors.FIRE_BRIGHT, Colors.FIRE]
-            color = colors[i % 3]
-
-            points = [
-                (fx, y + TILE),
-                (fx + 3, y + TILE),
-                (fx + 1.5, y + TILE - fh)
+            # Flame layers - outer to inner for depth
+            flame_layers = [
+                ((255, 60, 0), fh * 1.0, fw),      # Outer orange
+                ((255, 150, 0), fh * 0.85, fw * 0.8),  # Yellow-orange
+                ((255, 220, 50), fh * 0.7, fw * 0.6),  # Yellow
+                ((255, 255, 200), fh * 0.5, fw * 0.4), # White core
             ]
-            pygame.draw.polygon(surface, color, points)
+
+            for color, height, width in flame_layers:
+                cx = fx + fw // 2
+                points = [
+                    (cx - width / 2, y + TILE),
+                    (cx + width / 2, y + TILE),
+                    (cx + width / 4 + math.sin(phase * 1.5) * 2, y + TILE - height * 0.6),
+                    (cx + math.sin(phase * 2) * 3, y + TILE - height),
+                    (cx - width / 4 + math.sin(phase * 1.3) * 2, y + TILE - height * 0.6),
+                ]
+                pygame.draw.polygon(surface, color, points)
+                # Anti-aliased edges
+                pygame.gfxdraw.aapolygon(surface, [(int(p[0]), int(p[1])) for p in points], color)
+
+        # Ember particles
+        for i in range(3):
+            ex = x + random.randint(2, TILE - 2)
+            ey = y + TILE - int((time_val * 40 + i * 20) % TILE)
+            ember_color = (255, 200 + random.randint(-50, 50), 50)
+            pygame.gfxdraw.filled_circle(surface, ex, ey, 1, ember_color)
         return
 
-    # Normal tiles
+    # Normal tiles with 3D rendering
     if tile == FLOOR:
-        color = Colors.FLOOR if (row + col) % 2 == 0 else Colors.FLOOR_ALT
-        pygame.draw.rect(surface, color, (x, y, TILE, TILE))
-    elif tile == WALL:
-        pygame.draw.rect(surface, Colors.WALL, (x, y, TILE, TILE))
-        # 3D effect
-        pygame.draw.line(surface, Colors.WALL_HIGHLIGHT, (x, y), (x + TILE, y), 1)
-        pygame.draw.line(surface, Colors.WALL_HIGHLIGHT, (x, y), (x, y + TILE), 1)
-    elif tile == CORRIDOR:
-        pygame.draw.rect(surface, Colors.CORRIDOR, (x, y, TILE, TILE))
-    elif tile == CARPET:
-        pygame.draw.rect(surface, Colors.CARPET, (x, y, TILE, TILE))
-    elif tile == EXIT:
-        glow = int(abs(math.sin(time_val * 3)) * 40)
-        color = (50 + glow, 255, 100 + glow)
-        pygame.draw.rect(surface, color, (x, y, TILE, TILE))
-        pygame.draw.rect(surface, (255, 255, 255), (x + 1, y + 1, TILE - 2, TILE - 2), 1)
-    elif tile == DOOR:
-        pygame.draw.rect(surface, Colors.DOOR, (x, y, TILE, TILE))
+        # Alternating floor tiles with subtle 3D depth
+        if (row + col) % 2 == 0:
+            top_color = (190, 185, 175)
+            bottom_color = (165, 160, 150)
+        else:
+            top_color = (175, 170, 160)
+            bottom_color = (155, 150, 140)
 
-    # Alarm flash
+        draw_gradient_rect(surface, (x, y, TILE, TILE), top_color, bottom_color)
+
+        # Subtle tile edge grooves
+        pygame.draw.line(surface, (140, 135, 125), (x, y + TILE - 1), (x + TILE - 1, y + TILE - 1), 1)
+        pygame.draw.line(surface, (140, 135, 125), (x + TILE - 1, y), (x + TILE - 1, y + TILE - 1), 1)
+        pygame.draw.line(surface, (210, 205, 195), (x, y), (x + TILE - 1, y), 1)
+        pygame.draw.line(surface, (210, 205, 195), (x, y), (x, y + TILE - 1), 1)
+
+    elif tile == WALL:
+        # 3D raised wall block
+        wall_height = 6
+
+        # Main wall face with gradient
+        wall_top = (65, 70, 80)
+        wall_bottom = (35, 38, 45)
+        draw_gradient_rect(surface, (x, y, TILE, TILE), wall_top, wall_bottom)
+
+        # 3D top edge (lighter)
+        pygame.draw.line(surface, (95, 100, 110), (x, y), (x + TILE - 1, y), 2)
+        pygame.draw.line(surface, (85, 90, 100), (x, y + 1), (x + TILE - 1, y + 1), 1)
+
+        # Left edge highlight
+        pygame.draw.line(surface, (80, 85, 95), (x, y), (x, y + TILE - 1), 2)
+
+        # Right edge shadow
+        pygame.draw.line(surface, (25, 28, 35), (x + TILE - 1, y), (x + TILE - 1, y + TILE - 1), 2)
+        pygame.draw.line(surface, (30, 33, 40), (x + TILE - 2, y + 1), (x + TILE - 2, y + TILE - 2), 1)
+
+        # Bottom shadow
+        pygame.draw.line(surface, (20, 22, 28), (x, y + TILE - 1), (x + TILE - 1, y + TILE - 1), 2)
+
+        # Brick/block texture
+        brick_color = (55, 58, 65)
+        for by in range(0, TILE, 8):
+            offset = 0 if (by // 8) % 2 == 0 else TILE // 2
+            for bx in range(0, TILE, TILE // 2):
+                pygame.draw.rect(surface, brick_color, (x + (bx + offset) % TILE, y + by, TILE // 2 - 1, 7), 1)
+
+    elif tile == CORRIDOR:
+        # Polished corridor floor with reflective gradient
+        top_color = (175, 170, 165)
+        mid_color = (160, 155, 150)
+        bottom_color = (145, 140, 135)
+
+        draw_gradient_rect(surface, (x, y, TILE, TILE // 2), top_color, mid_color)
+        draw_gradient_rect(surface, (x, y + TILE // 2, TILE, TILE // 2), mid_color, bottom_color)
+
+        # Subtle reflection line
+        pygame.draw.line(surface, (195, 190, 185), (x + 2, y + TILE // 3), (x + TILE - 3, y + TILE // 3), 1)
+
+        # Edge grooves
+        pygame.draw.line(surface, (125, 120, 115), (x, y + TILE - 1), (x + TILE - 1, y + TILE - 1), 1)
+        pygame.draw.line(surface, (125, 120, 115), (x + TILE - 1, y), (x + TILE - 1, y + TILE - 1), 1)
+
+    elif tile == CARPET:
+        # Rich carpet with fabric texture
+        base_color = (110, 70, 70)
+        light_color = (130, 85, 85)
+        dark_color = (85, 55, 55)
+
+        draw_gradient_rect(surface, (x, y, TILE, TILE), light_color, base_color)
+
+        # Carpet texture pattern
+        for ty in range(0, TILE, 3):
+            for tx in range(0, TILE, 3):
+                if (tx + ty) % 6 == 0:
+                    pygame.draw.rect(surface, dark_color, (x + tx, y + ty, 2, 2))
+                elif (tx + ty) % 6 == 3:
+                    pygame.draw.rect(surface, light_color, (x + tx, y + ty, 2, 2))
+
+        # Soft edge shadow
+        pygame.draw.line(surface, (75, 45, 45), (x + TILE - 1, y), (x + TILE - 1, y + TILE - 1), 1)
+        pygame.draw.line(surface, (75, 45, 45), (x, y + TILE - 1), (x + TILE - 1, y + TILE - 1), 1)
+
+    elif tile == EXIT:
+        # Glowing exit with pulsing 3D effect
+        glow_intensity = abs(math.sin(time_val * 3))
+        glow = int(glow_intensity * 60)
+
+        # Multi-layer glow effect
+        for i in range(3, 0, -1):
+            glow_alpha = int(40 * glow_intensity / i)
+            glow_rect = pygame.Surface((TILE + i * 4, TILE + i * 4), pygame.SRCALPHA)
+            glow_rect.fill((50 + glow, 255, 100 + glow, glow_alpha))
+            surface.blit(glow_rect, (x - i * 2, y - i * 2))
+
+        # Main exit with gradient
+        top_color = (80 + glow, 255, 140 + glow // 2)
+        bottom_color = (40 + glow // 2, 200, 80 + glow // 2)
+        draw_gradient_rect(surface, (x, y, TILE, TILE), top_color, bottom_color)
+
+        # 3D raised border
+        pygame.draw.rect(surface, (255, 255, 255), (x + 1, y + 1, TILE - 2, TILE - 2), 2)
+        pygame.draw.rect(surface, (200, 255, 220), (x + 3, y + 3, TILE - 6, TILE - 6), 1)
+
+        # Exit arrow/icon
+        arrow_color = (255, 255, 255)
+        cx, cy = x + TILE // 2, y + TILE // 2
+        pygame.draw.polygon(surface, arrow_color, [
+            (cx - 4, cy - 2), (cx + 2, cy - 2), (cx + 2, cy - 5),
+            (cx + 6, cy), (cx + 2, cy + 5), (cx + 2, cy + 2), (cx - 4, cy + 2)
+        ])
+
+    elif tile == DOOR:
+        # Wooden door with 3D panels
+        # Door frame
+        pygame.draw.rect(surface, (80, 50, 25), (x, y, TILE, TILE))
+
+        # Door surface with wood grain gradient
+        door_top = (150, 95, 50)
+        door_bottom = (100, 60, 30)
+        draw_gradient_rect(surface, (x + 2, y + 2, TILE - 4, TILE - 4), door_top, door_bottom)
+
+        # Door panels (recessed)
+        panel_color = (120, 75, 40)
+        panel_shadow = (90, 55, 28)
+        panel_highlight = (160, 105, 60)
+
+        # Top panel
+        pygame.draw.rect(surface, panel_shadow, (x + 4, y + 4, TILE - 8, TILE // 2 - 5))
+        pygame.draw.rect(surface, panel_color, (x + 5, y + 5, TILE - 10, TILE // 2 - 7))
+        pygame.draw.line(surface, panel_highlight, (x + 5, y + 5), (x + TILE - 6, y + 5), 1)
+
+        # Bottom panel
+        pygame.draw.rect(surface, panel_shadow, (x + 4, y + TILE // 2 + 2, TILE - 8, TILE // 2 - 5))
+        pygame.draw.rect(surface, panel_color, (x + 5, y + TILE // 2 + 3, TILE - 10, TILE // 2 - 7))
+        pygame.draw.line(surface, panel_highlight, (x + 5, y + TILE // 2 + 3), (x + TILE - 6, y + TILE // 2 + 3), 1)
+
+        # Door handle
+        pygame.draw.circle(surface, (200, 180, 50), (x + TILE - 7, y + TILE // 2), 3)
+        pygame.gfxdraw.aacircle(surface, x + TILE - 7, y + TILE // 2, 3, (220, 200, 70))
+
+    # Alarm flash with softer blend
     if alarm_flash and tile != WALL:
         overlay = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
-        overlay.fill((255, 0, 0, 20))
+        # Pulsing red glow
+        pulse = abs(math.sin(time_val * 8)) * 0.5 + 0.5
+        overlay.fill((255, 30, 30, int(25 * pulse)))
         surface.blit(overlay, (x, y))
 
 def draw_smoke(surface, smoke, shake):
+    """Draw volumetric 3D smoke with layered opacity."""
     for (r, c), level in smoke.items():
         if level > 0.1:
             x = int(c * TILE + shake[0])
             y = int(r * TILE + shake[1])
-            alpha = min(int(level * 120), 180)
+
+            # Create layered smoke effect for 3D depth
             overlay = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
-            overlay.fill((65, 65, 70, alpha))
+
+            # Multiple smoke layers with different colors for depth
+            layers = [
+                (75, 75, 80, min(int(level * 80), 120)),   # Dark base
+                (85, 85, 90, min(int(level * 60), 100)),   # Mid layer
+                (100, 100, 105, min(int(level * 40), 80)), # Light wisps
+            ]
+
+            for i, (r_col, g_col, b_col, alpha) in enumerate(layers):
+                layer_surf = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
+                # Offset each layer slightly for 3D effect
+                offset = i * 2
+                pygame.draw.ellipse(layer_surf, (r_col, g_col, b_col, alpha),
+                                   (offset, offset, TILE - offset * 2, TILE - offset * 2))
+                overlay.blit(layer_surf, (0, 0))
+
+            # Add some swirling motion indication
+            if level > 0.3:
+                swirl_x = int(math.sin(c + level * 5) * 3)
+                swirl_y = int(math.cos(r + level * 5) * 3)
+                pygame.gfxdraw.filled_circle(overlay, TILE // 2 + swirl_x, TILE // 2 + swirl_y,
+                                            TILE // 4, (90, 90, 95, min(int(level * 50), 80)))
+
             surface.blit(overlay, (x, y))
 
 def draw_neural_predictions(surface, predictions, shake, time_val):
-    """Draw neural network predictions as glowing areas."""
+    """Draw neural network predictions as glowing holographic areas."""
     for r, c, prob in predictions:
         x = int(c * TILE + shake[0])
         y = int(r * TILE + shake[1])
 
         pulse = abs(math.sin(time_val * 4)) * 0.3 + 0.7
-        alpha = int(60 * prob * pulse)
+        base_alpha = int(80 * prob * pulse)
 
-        overlay = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
-        overlay.fill((255, 50, 200, alpha))
-        surface.blit(overlay, (x, y))
+        # Create holographic prediction effect
+        overlay = pygame.Surface((TILE + 4, TILE + 4), pygame.SRCALPHA)
+
+        # Outer glow
+        glow_color = (255, 50, 200, base_alpha // 3)
+        pygame.draw.rect(overlay, glow_color, (0, 0, TILE + 4, TILE + 4))
+
+        # Inner prediction zone with scanline effect
+        inner_color = (255, 80, 220, base_alpha)
+        pygame.draw.rect(overlay, inner_color, (2, 2, TILE, TILE))
+
+        # Scanlines for tech effect
+        for sy in range(0, TILE, 3):
+            line_alpha = int(base_alpha * 0.3)
+            pygame.draw.line(overlay, (255, 255, 255, line_alpha), (2, 2 + sy), (TILE + 1, 2 + sy), 1)
+
+        # Pulsing border
+        border_alpha = int(pulse * 200)
+        pygame.draw.rect(overlay, (255, 100, 255, border_alpha), (2, 2, TILE, TILE), 2)
+
+        # Corner accents
+        corner_size = 4
+        corner_color = (255, 200, 255, int(pulse * 255))
+        pygame.draw.line(overlay, corner_color, (2, 2), (2 + corner_size, 2), 2)
+        pygame.draw.line(overlay, corner_color, (2, 2), (2, 2 + corner_size), 2)
+        pygame.draw.line(overlay, corner_color, (TILE, 2), (TILE - corner_size, 2), 2)
+        pygame.draw.line(overlay, corner_color, (TILE, 2), (TILE, 2 + corner_size), 2)
+
+        surface.blit(overlay, (x - 2, y - 2))
 
 def draw_pheromones(surface, neural_aco, shake):
-    """Visualize pheromone trails."""
+    """Visualize pheromone trails with glowing 3D effect."""
     safe = neural_aco.safe_pheromone
     danger = neural_aco.danger_pheromone
 
@@ -3441,19 +3802,46 @@ def draw_pheromones(surface, neural_aco, shake):
         for c in range(COLS):
             x = int(c * TILE + shake[0])
             y = int(r * TILE + shake[1])
+            cx, cy = x + TILE // 2, y + TILE // 2
 
-            # Safe pheromone (green)
+            # Safe pheromone (glowing green trail)
             if safe[r, c] > 0.3:
-                alpha = min(int((safe[r, c] - 0.3) * 30), 80)
-                overlay = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
-                overlay.fill((0, 255, 150, alpha))
-                surface.blit(overlay, (x, y))
+                intensity = (safe[r, c] - 0.3) / 0.7  # Normalize to 0-1
+                base_alpha = min(int(intensity * 60), 80)
 
-            # Danger pheromone (red)
+                # Outer glow
+                glow_radius = int(TILE * 0.6 * (1 + intensity * 0.3))
+                glow_surf = pygame.Surface((TILE + 8, TILE + 8), pygame.SRCALPHA)
+                pygame.gfxdraw.filled_circle(glow_surf, TILE // 2 + 4, TILE // 2 + 4,
+                                            glow_radius, (0, 255, 150, base_alpha // 2))
+                surface.blit(glow_surf, (x - 4, y - 4))
+
+                # Inner bright core
+                core_radius = int(TILE * 0.3 * (1 + intensity * 0.2))
+                pygame.gfxdraw.filled_circle(surface, cx, cy, core_radius, (100, 255, 180, base_alpha))
+                pygame.gfxdraw.aacircle(surface, cx, cy, core_radius, (150, 255, 200, min(base_alpha + 40, 255)))
+
+            # Danger pheromone (pulsing red warning)
             if danger[r, c] > 0.5:
-                alpha = min(int(danger[r, c] * 15), 100)
+                intensity = (danger[r, c] - 0.5) / 0.5
+                base_alpha = min(int(intensity * 40), 100)
+
+                # Hazard pattern
                 overlay = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
-                overlay.fill((255, 80, 80, alpha))
+
+                # Radial danger gradient
+                for ring in range(3, 0, -1):
+                    ring_alpha = int(base_alpha / ring)
+                    ring_radius = TILE // 2 - (3 - ring) * 3
+                    pygame.gfxdraw.filled_circle(overlay, TILE // 2, TILE // 2,
+                                                ring_radius, (255, 60 + ring * 20, 60 + ring * 20, ring_alpha))
+
+                # Warning stripes for high danger
+                if intensity > 0.5:
+                    for stripe in range(0, TILE, 6):
+                        pygame.draw.line(overlay, (255, 200, 0, base_alpha // 2),
+                                        (stripe, 0), (stripe + 3, TILE), 2)
+
                 surface.blit(overlay, (x, y))
 
 def draw_panel(surface, stats, neural_aco, sensor_network, rl_coordinator, mesh_network, time_val, paused, speed):
