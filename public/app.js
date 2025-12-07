@@ -2184,6 +2184,11 @@ function addEarthquake(row, col) {
     if (CONFIG.USE_BACKEND) {
         sendCommand({ action: 'add_quake', row, col });
         addChatMessage('alarm', `Earthquake epicenter set at (${row}, ${col}) [backend].`);
+        // Client-side visual hint while backend processes
+        gameState.earthquakeActive = true;
+        gameState.earthquakeTimer = 5;
+        gameState.earthquakeEpicenter = { row, col };
+        gameState.shake.intensity = Math.max(gameState.shake.intensity, 4);
         return;
     }
 
@@ -2552,7 +2557,8 @@ async function fetchInitialState() {
 async function pollBackendState() {
     if (!CONFIG.USE_BACKEND) return;
     try {
-        const response = await fetch(`${CONFIG.HEADLESS_URL}?steps=60&dt=0.033&full=1`);
+        // Smaller step count keeps transient effects (e.g., quake shake) visible between polls
+        const response = await fetch(`${CONFIG.HEADLESS_URL}?steps=15&dt=0.033&full=1`);
         const data = await response.json();
         if (!data.success) return;
 
