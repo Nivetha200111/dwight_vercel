@@ -3979,14 +3979,23 @@ def generate_building():
                 if maze[r][c] != CORRIDOR:
                     maze[r][c] = CARPET
 
-        # Door
+        # Multiple doors per room: try all four sides, prefer corridors
+        door_candidates = []
         for c in range(c1 + 1, c2):
             if r2 + 1 < ROWS and maze[r2 + 1][c] == CORRIDOR:
-                maze[r2][c] = DOOR
-                return
+                door_candidates.append((r2, c))
             if r1 - 1 > 0 and maze[r1 - 1][c] == CORRIDOR:
-                maze[r1][c] = DOOR
-                return
+                door_candidates.append((r1, c))
+        for r in range(r1 + 1, r2):
+            if c1 - 1 > 0 and maze[r][c1 - 1] == CORRIDOR:
+                door_candidates.append((r, c1))
+            if c2 + 1 < COLS and maze[r][c2 + 1] == CORRIDOR:
+                door_candidates.append((r, c2))
+
+        # Place up to three doors to keep flow without over-opening
+        random.shuffle(door_candidates)
+        for dr, dc in door_candidates[:3]:
+            maze[dr][dc] = DOOR
 
     sections = [
         (2, h_corr[0] - 2, 2, v_corr[0] - 2),
@@ -4005,15 +4014,26 @@ def generate_building():
         if r2 - r1 > 3 and c2 - c1 > 3:
             make_room(r1, r2, c1, c2)
 
-    # Exits
+    # Exits (add more mid-wall and interior corridor exits for faster egress)
     exit_pos = [
         (h_corr[0], 1), (h_corr[1], 1),
         (h_corr[0], COLS - 2), (h_corr[1], COLS - 2),
         (1, v_corr[0]), (1, v_corr[1]), (1, v_corr[2]),
         (ROWS - 2, v_corr[0]), (ROWS - 2, v_corr[1]), (ROWS - 2, v_corr[2]),
+        # Mid-edge exits
+        (ROWS // 2, 1), (ROWS // 2, COLS - 2),
+        (1, COLS // 2), (ROWS - 2, COLS // 2),
+        # Interior corridor exits at key intersections
+        (h_corr[0], v_corr[1]), (h_corr[1], v_corr[1]),
+        (ROWS // 2, v_corr[0]), (ROWS // 2, v_corr[2]),
     ]
 
+    # Deduplicate while preserving intent
+    seen_exits = set()
     for er, ec in exit_pos:
+        if (er, ec) in seen_exits:
+            continue
+        seen_exits.add((er, ec))
         if 0 < er < ROWS - 1 and 0 < ec < COLS - 1:
             maze[er][ec] = EXIT
             exits.append((er, ec))
