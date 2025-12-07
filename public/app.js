@@ -65,9 +65,9 @@ const COLORS = {
     EARTHQUAKE: '#cfd5dd',
 
     // Pheromones
-    SAFE_PHEROMONE: 'rgba(0, 255, 136, 0.3)',
-    DANGER_PHEROMONE: 'rgba(255, 68, 68, 0.4)',
-    PREDICTION: 'rgba(192, 101, 255, 0.4)',
+    SAFE_PHEROMONE: 'rgba(0, 255, 136, 0.6)',     // more opaque for emphasis
+    DANGER_PHEROMONE: 'rgba(255, 68, 68, 0.7)',   // more opaque for emphasis
+    PREDICTION: 'rgba(192, 101, 255, 0.55)',
 
     // People
     NORMAL: '#6496ff',
@@ -1013,9 +1013,40 @@ function render() {
     drawRLArrows();
 
     // Draw people (sorted by Y for proper overlapping)
-    [...gameState.people]
-        .sort((a, b) => a.row - b.row)
-        .forEach(drawPerson);
+    const peopleSorted = [...gameState.people].sort((a, b) => a.row - b.row);
+    peopleSorted.forEach(drawPerson);
+
+    // POV dim + dialogue bubble like Minecraft when a person is selected
+    if (gameState.selectedPersonId !== null) {
+        const person = gameState.people.find(p => p.id === gameState.selectedPersonId && p.alive && !p.escaped);
+        if (person) {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+            ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+            // Re-draw the selected person on top of the dim
+            drawPerson(person);
+
+            // Dialogue bubble above
+            const px = person.col * tileSize + tileSize / 2 + shakeX;
+            const py = person.row * tileSize + tileSize / 2 + shakeY - tileSize;
+            const text = person.state === STATE.PANICKING
+                ? "Help! Need a clear path!"
+                : person.state === STATE.EVACUATING
+                    ? "I see the exit—keep going!"
+                    : "Moving out!";
+            ctx.font = `${Math.floor(tileSize * 0.9)}px VT323, monospace`;
+            const metrics = ctx.measureText(text);
+            const w = metrics.width + 12;
+            const h = tileSize + 6;
+            ctx.fillStyle = 'rgba(0, 120, 90, 0.9)';
+            ctx.fillRect(px - w / 2, py - h, w, h);
+            ctx.strokeStyle = 'rgba(0, 200, 150, 1)';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(px - w / 2, py - h, w, h);
+            ctx.fillStyle = '#fff';
+            ctx.fillText(text, px - w / 2 + 6, py - h / 2 + 4);
+        }
+    }
 
     // Earthquake rings
     drawEarthquakeEffect();
@@ -2353,6 +2384,54 @@ function generateLocalState() {
                     }
                 }
             }
+
+            // Corridor-facing doors on every corridor-adjacent wall cell
+            for (let c = c1 + 1; c < c2; c++) {
+                if (r2 + 1 < CONFIG.ROWS && gameState.maze[r2 + 1][c] === TILE.CORRIDOR) {
+                    gameState.maze[r2][c] = TILE.DOOR;
+                }
+                if (r1 - 1 > 0 && gameState.maze[r1 - 1][c] === TILE.CORRIDOR) {
+                    gameState.maze[r1][c] = TILE.DOOR;
+                }
+            }
+            for (let r = r1 + 1; r < r2; r++) {
+                if (c2 + 1 < CONFIG.COLS && gameState.maze[r][c2 + 1] === TILE.CORRIDOR) {
+                    gameState.maze[r][c2] = TILE.DOOR;
+                }
+                if (c1 - 1 > 0 && gameState.maze[r][c1 - 1] === TILE.CORRIDOR) {
+                    gameState.maze[r][c1] = TILE.DOOR;
+                }
+            }
+
+            // Interior doors for flow (center and thirds)
+            if ((r2 - r1) > 4 && (c2 - c1) > 4) {
+                const rMid = Math.floor((r1 + r2) / 2);
+                const cMid = Math.floor((c1 + c2) / 2);
+                const thirds = [
+                    [r1 + Math.floor((r2 - r1) / 3), cMid],
+                    [r1 + Math.floor(2 * (r2 - r1) / 3), cMid],
+                    [rMid, c1 + Math.floor((c2 - c1) / 3)],
+                    [rMid, c1 + Math.floor(2 * (c2 - c1) / 3)],
+                ];
+                const candidates = [
+                    [rMid, cMid],
+                    [rMid, cMid - 2],
+                    [rMid, cMid + 2],
+                    [rMid - 2, cMid],
+                    [rMid + 2, cMid],
+                    ...thirds,
+                ];
+                const dedup = {};
+                candidates.forEach(([rr, cc]) => {
+                    if (rr > r1 && rr < r2 && cc > c1 && cc < c2 && gameState.maze[rr][cc] === TILE.CARPET) {
+                        dedup[`${rr},${cc}`] = true;
+                    }
+                });
+                Object.keys(dedup).slice(0, 4).forEach(key => {
+                    const [rr, cc] = key.split(',').map(Number);
+                    gameState.maze[rr][cc] = TILE.DOOR;
+                });
+            }
         }
     });
 
@@ -2379,6 +2458,22 @@ function generateLocalState() {
                     }
                 }
             }
+        }
+    });
+
+    // Add more mid-edge and interior exits to reduce bottlenecks
+    const extraExits = [
+        [Math.floor(CONFIG.ROWS / 2), 1],
+        [Math.floor(CONFIG.ROWS / 2), CONFIG.COLS - 2],
+        [1, Math.floor(CONFIG.COLS / 2)],
+        [CONFIG.ROWS - 2, Math.floor(CONFIG.COLS / 2)],
+        [hCorr[0], vCorr[1]],
+        [hCorr[1], vCorr[1]]
+    ];
+    extraExits.forEach(([er, ec]) => {
+        if (er > 0 && er < CONFIG.ROWS - 1 && ec > 0 && ec < CONFIG.COLS - 1) {
+            gameState.exits.push([er, ec]);
+            gameState.maze[er][ec] = TILE.EXIT;
         }
     });
 
