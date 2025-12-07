@@ -2202,7 +2202,8 @@ class IoTSensorNetwork:
     - Multiple sensor types
     - Kalman filtering for noise reduction
     - Battery/health simulation
-    - Mesh network communication delay
+    - Mesh network communication with inter-sensor alerting
+    - Alert propagation across the entire office
     """
     def __init__(self):
         self.sensors: Dict[int, IoTSensor] = {}
@@ -2214,6 +2215,16 @@ class IoTSensorNetwork:
         # Kalman filter state for each sensor
         self.kalman_state: Dict[int, dict] = {}
 
+        # === MESH NETWORK COMMUNICATION ===
+        self.communication_range = 12  # Tiles - sensors can talk to neighbors within this range
+        self.sensor_links: Dict[int, List[int]] = {}  # Adjacency list for sensor mesh
+        self.alert_propagation: Dict[int, float] = {}  # sensor_id -> alert level (0-1)
+        self.propagation_speed = 2.0  # How fast alerts spread through network
+        self.global_alert_level = 0.0  # Overall office alert level (0-1)
+        self.alert_source_positions: List[Tuple[int, int]] = []  # Where alerts originated
+        self.communication_pulses: List[dict] = []  # Visual pulses traveling between sensors
+        self.network_alarm_triggered = False  # Has the network triggered a full alarm?
+
     def add_sensor(self, sensor: IoTSensor):
         self.sensors[sensor.id] = sensor
         self.sensor_grid[(sensor.row, sensor.col)].append(sensor.id)
@@ -2223,6 +2234,79 @@ class IoTSensorNetwork:
             'process_noise': 0.01,
             'measurement_noise': sensor.noise_level
         }
+        # Initialize alert propagation state
+        self.alert_propagation[sensor.id] = 0.0
+        self.sensor_links[sensor.id] = []
+
+    def build_mesh_network(self):
+        """Build the sensor mesh network by connecting sensors within communication range."""
+        self.sensor_links = {sid: [] for sid in self.sensors}
+
+        sensor_list = list(self.sensors.values())
+        for i, s1 in enumerate(sensor_list):
+            for s2 in sensor_list[i+1:]:
+                dist = abs(s1.row - s2.row) + abs(s1.col - s2.col)
+                if dist <= self.communication_range:
+                    self.sensor_links[s1.id].append(s2.id)
+                    self.sensor_links[s2.id].append(s1.id)
+
+    def propagate_alerts(self, dt):
+        """Propagate alerts through the sensor mesh network."""
+        new_propagation = dict(self.alert_propagation)
+
+        for sensor_id, alert_level in self.alert_propagation.items():
+            if alert_level > 0.1:  # Only propagate if there's significant alert
+                sensor = self.sensors.get(sensor_id)
+                if not sensor or sensor.health <= 0:
+                    continue
+
+                # Spread to connected sensors
+                for neighbor_id in self.sensor_links.get(sensor_id, []):
+                    neighbor = self.sensors.get(neighbor_id)
+                    if not neighbor or neighbor.health <= 0:
+                        continue
+
+                    # Calculate propagation based on distance
+                    dist = abs(sensor.row - neighbor.row) + abs(sensor.col - neighbor.col)
+                    propagation_strength = alert_level * 0.8 * (1 - dist / self.communication_range)
+
+                    # Update neighbor's alert level if our signal is stronger
+                    if propagation_strength > new_propagation[neighbor_id]:
+                        new_propagation[neighbor_id] = max(new_propagation[neighbor_id],
+                                                          propagation_strength - 0.1)
+
+                        # Create visual pulse for communication
+                        if random.random() < 0.3:  # Don't create too many pulses
+                            self.communication_pulses.append({
+                                'from': (sensor.row, sensor.col),
+                                'to': (neighbor.row, neighbor.col),
+                                'progress': 0.0,
+                                'speed': 3.0,
+                                'color': (255, 200, 50) if alert_level > 0.7 else (100, 200, 255)
+                            })
+
+        # Apply propagation updates
+        self.alert_propagation = new_propagation
+
+        # Update communication pulses
+        updated_pulses = []
+        for pulse in self.communication_pulses:
+            pulse['progress'] += pulse['speed'] * dt
+            if pulse['progress'] < 1.0:
+                updated_pulses.append(pulse)
+        self.communication_pulses = updated_pulses
+
+        # Calculate global alert level (average of all sensor alerts)
+        active_alerts = [a for sid, a in self.alert_propagation.items()
+                        if self.sensors.get(sid) and self.sensors[sid].health > 0]
+        if active_alerts:
+            self.global_alert_level = sum(active_alerts) / len(active_alerts)
+
+            # Trigger network-wide alarm if enough sensors are alerted
+            alerted_count = sum(1 for a in active_alerts if a > 0.5)
+            if alerted_count >= 3 and not self.network_alarm_triggered:
+                self.network_alarm_triggered = True
+                sound_system.play('alarm', 0.5)
 
     def kalman_update(self, sensor_id: int, measurement: float) -> float:
         """Apply Kalman filter to sensor reading."""
@@ -2240,7 +2324,7 @@ class IoTSensorNetwork:
         return state['estimate']
 
     def update(self, dt, fire_positions, smoke_map, people_positions, maze):
-        """Update all sensors based on environment."""
+        """Update all sensors based on environment and propagate alerts through network."""
         self.alerts.clear()
 
         for sensor_id, sensor in self.sensors.items():
@@ -2255,6 +2339,8 @@ class IoTSensorNetwork:
                 sensor.health -= 5 * dt
 
             if sensor.health <= 0:
+                # Dead sensors can't propagate alerts
+                self.alert_propagation[sensor_id] = 0
                 continue
 
             # Calculate raw reading based on environment
@@ -2273,7 +2359,7 @@ class IoTSensorNetwork:
             was_triggered = sensor.triggered
             sensor.triggered = filtered_value > sensor.threshold
 
-            # Generate alert on state change
+            # Generate alert on state change and initiate network propagation
             if sensor.triggered and not was_triggered:
                 if random.random() > self.packet_loss_rate:
                     self.alerts.append({
@@ -2283,6 +2369,27 @@ class IoTSensorNetwork:
                         'position': (sensor.row, sensor.col),
                         'timestamp': time.time()
                     })
+
+                    # === INITIATE ALERT PROPAGATION ===
+                    # This sensor becomes an alert source - full alert level
+                    self.alert_propagation[sensor_id] = 1.0
+                    self.alert_source_positions.append((sensor.row, sensor.col))
+
+                    # Play sensor alert sound
+                    sound_system.play('sensor_alert', 0.4)
+
+            # Maintain alert level for triggered sensors
+            if sensor.triggered:
+                self.alert_propagation[sensor_id] = max(self.alert_propagation.get(sensor_id, 0), 0.9)
+
+        # === PROPAGATE ALERTS THROUGH MESH NETWORK ===
+        self.propagate_alerts(dt)
+
+        # Decay alert propagation over time (alerts fade if source is gone)
+        for sensor_id in self.alert_propagation:
+            sensor = self.sensors.get(sensor_id)
+            if sensor and not sensor.triggered:
+                self.alert_propagation[sensor_id] *= 0.98  # Slow decay
 
     def _calculate_raw_reading(self, sensor, fire_positions, smoke_map, people_positions):
         """Calculate sensor reading based on environment."""
@@ -2356,10 +2463,82 @@ class IoTSensorNetwork:
         return data
 
     def draw(self, surface, shake, time_val):
-        """Draw 3D sensors with enhanced glow effects on the map."""
+        """Draw 3D sensors with mesh network links and communication visualization."""
+
+        # === DRAW MESH NETWORK LINKS FIRST (underneath sensors) ===
+        for sensor_id, neighbors in self.sensor_links.items():
+            sensor = self.sensors.get(sensor_id)
+            if not sensor or sensor.health <= 0:
+                continue
+
+            x1 = int(sensor.col * TILE + TILE // 2 + shake[0])
+            y1 = int(sensor.row * TILE + TILE // 2 + shake[1])
+
+            for neighbor_id in neighbors:
+                if neighbor_id <= sensor_id:  # Avoid drawing links twice
+                    continue
+                neighbor = self.sensors.get(neighbor_id)
+                if not neighbor or neighbor.health <= 0:
+                    continue
+
+                x2 = int(neighbor.col * TILE + TILE // 2 + shake[0])
+                y2 = int(neighbor.row * TILE + TILE // 2 + shake[1])
+
+                # Link color based on alert propagation
+                alert1 = self.alert_propagation.get(sensor_id, 0)
+                alert2 = self.alert_propagation.get(neighbor_id, 0)
+                max_alert = max(alert1, alert2)
+
+                if max_alert > 0.5:
+                    # Active alert - orange/red pulsing line
+                    pulse = abs(math.sin(time_val * 6))
+                    link_color = (255, int(100 + 100 * pulse), 50, int(100 + 100 * max_alert))
+                    link_width = 2
+                elif max_alert > 0.1:
+                    # Propagating alert - yellow line
+                    link_color = (200, 200, 100, int(60 + 80 * max_alert))
+                    link_width = 1
+                else:
+                    # Idle link - faint blue
+                    link_color = (80, 120, 180, 40)
+                    link_width = 1
+
+                # Draw link line
+                link_surf = pygame.Surface((abs(x2 - x1) + 10, abs(y2 - y1) + 10), pygame.SRCALPHA)
+                lx1, ly1 = 5 if x1 <= x2 else abs(x2 - x1) + 5, 5 if y1 <= y2 else abs(y2 - y1) + 5
+                lx2, ly2 = abs(x2 - x1) + 5 if x1 <= x2 else 5, abs(y2 - y1) + 5 if y1 <= y2 else 5
+                pygame.draw.line(link_surf, link_color, (lx1, ly1), (lx2, ly2), link_width)
+                surface.blit(link_surf, (min(x1, x2) - 5, min(y1, y2) - 5))
+
+        # === DRAW COMMUNICATION PULSES ===
+        for pulse in self.communication_pulses:
+            fr, fc = pulse['from']
+            tr, tc = pulse['to']
+            progress = pulse['progress']
+
+            x1 = int(fc * TILE + TILE // 2 + shake[0])
+            y1 = int(fr * TILE + TILE // 2 + shake[1])
+            x2 = int(tc * TILE + TILE // 2 + shake[0])
+            y2 = int(tr * TILE + TILE // 2 + shake[1])
+
+            # Interpolate position
+            px = int(x1 + (x2 - x1) * progress)
+            py = int(y1 + (y2 - y1) * progress)
+
+            # Draw pulse as glowing circle
+            pulse_radius = 4
+            pulse_color = pulse['color']
+            pygame.gfxdraw.filled_circle(surface, px, py, pulse_radius + 2, (pulse_color[0], pulse_color[1], pulse_color[2], 100))
+            pygame.gfxdraw.filled_circle(surface, px, py, pulse_radius, pulse_color)
+            pygame.gfxdraw.aacircle(surface, px, py, pulse_radius, (255, 255, 255))
+
+        # === DRAW SENSORS ===
         for sensor in self.sensors.values():
             x = int(sensor.col * TILE + TILE // 2 + shake[0])
             y = int(sensor.row * TILE + TILE // 2 + shake[1])
+
+            # Get alert propagation level for this sensor
+            alert_level = self.alert_propagation.get(sensor.id, 0)
 
             # Color based on type and status with enhanced palette
             if sensor.health <= 0:
@@ -2380,6 +2559,11 @@ class IoTSensorNetwork:
                 else:
                     color = (0, flash_int, 255)
                     glow_color = (50, 100, 255, int(flash * 100))
+            elif alert_level > 0.3:
+                # Sensor received alert from network - show warning color
+                alert_flash = abs(math.sin(time_val * 5))
+                color = (255, int(150 + 100 * alert_flash), 50)
+                glow_color = (255, 180, 50, int(80 * alert_level))
             else:
                 if sensor.sensor_type == 'temperature':
                     color = (220, 120, 60)
@@ -2396,12 +2580,13 @@ class IoTSensorNetwork:
 
             sensor_radius = 6
 
-            # Outer glow for active sensors
+            # Outer glow for active sensors - enhanced for alerted sensors
             if sensor.health > 0:
                 glow_surf = pygame.Surface((sensor_radius * 4 + 8, sensor_radius * 4 + 8), pygame.SRCALPHA)
                 if len(glow_color) == 4:
+                    glow_radius = sensor_radius * 2 + int(alert_level * 4)
                     pygame.gfxdraw.filled_circle(glow_surf, sensor_radius * 2 + 4, sensor_radius * 2 + 4,
-                                                sensor_radius * 2, glow_color)
+                                                glow_radius, glow_color)
                 surface.blit(glow_surf, (x - sensor_radius * 2 - 4, y - sensor_radius * 2 - 4))
 
             # 3D sensor body with gradient effect
@@ -2420,8 +2605,13 @@ class IoTSensorNetwork:
             # White border ring
             pygame.gfxdraw.aacircle(surface, x, y, sensor_radius + 1, (255, 255, 255))
 
-            # Center indicator dot
-            center_color = (255, 255, 255) if sensor.health > 50 else (255, 100, 100)
+            # Center indicator dot - changes color based on alert level
+            if alert_level > 0.5:
+                center_color = (255, 200, 50)  # Alert received
+            elif sensor.health > 50:
+                center_color = (255, 255, 255)
+            else:
+                center_color = (255, 100, 100)
             pygame.gfxdraw.filled_circle(surface, x, y, 2, center_color)
 
             # Signal waves if triggered - enhanced ripple effect
@@ -2432,6 +2622,32 @@ class IoTSensorNetwork:
                     wave_alpha = max(0, 180 - wave_radius * 8)
                     if wave_alpha > 0:
                         pygame.gfxdraw.aacircle(surface, x, y, wave_radius, (*color[:3], wave_alpha))
+
+            # Alert propagation waves for sensors receiving network alerts
+            elif alert_level > 0.3 and sensor.health > 0:
+                for wave in range(2):
+                    wave_phase = (time_val * 15 + wave * 8) % 15
+                    wave_radius = int(wave_phase) + sensor_radius + 2
+                    wave_alpha = int(max(0, 120 * alert_level - wave_radius * 5))
+                    if wave_alpha > 0:
+                        pygame.gfxdraw.aacircle(surface, x, y, wave_radius, (255, 200, 100, wave_alpha))
+
+        # === DRAW GLOBAL ALERT INDICATOR ===
+        if self.global_alert_level > 0.3:
+            # Show "NETWORK ALERT" text at top of screen
+            try:
+                font = pygame.font.Font(None, 24)
+                flash = abs(math.sin(time_val * 4))
+                alert_text = f"SENSOR NETWORK ALERT: {self.global_alert_level:.0%}"
+                text_surf = font.render(alert_text, True, (255, int(150 + 100 * flash), 50))
+                text_rect = text_surf.get_rect(center=(MAP_WIDTH // 2 + shake[0], 15 + shake[1]))
+                # Background
+                bg_rect = (text_rect.x - 5, text_rect.y - 2, text_rect.width + 10, text_rect.height + 4)
+                pygame.draw.rect(surface, (80, 30, 20), bg_rect)
+                pygame.draw.rect(surface, (200, 100, 50), bg_rect, 2)
+                surface.blit(text_surf, text_rect)
+            except:
+                pass
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SOLDIER MESH NETWORK (INDIAN ARMY HANDHELD MESH LAYER)
@@ -2870,6 +3086,29 @@ class SoundSystem:
         panic = (panic * 32767).astype(np.int16)
         panic_stereo = np.column_stack((panic, panic))
         self.sounds['panic'] = pygame.sndarray.make_sound(panic_stereo)
+
+        # SENSOR NETWORK ALERT - cascading warning tone
+        duration = 0.6
+        t = np.linspace(0, duration, int(sample_rate * duration), False)
+        # Dual-tone alert like emergency broadcast
+        tone_a = np.sin(2 * np.pi * 950 * t) * 0.25
+        tone_b = np.sin(2 * np.pi * 1050 * t) * 0.25
+        # Alternating pattern
+        pattern = np.where((t * 8).astype(int) % 2 == 0, tone_a, tone_b)
+        sensor_alert = pattern * np.exp(-t * 1.5)
+        sensor_alert = (sensor_alert * 32767).astype(np.int16)
+        alert_stereo = np.column_stack((sensor_alert, sensor_alert))
+        self.sounds['sensor_alert'] = pygame.sndarray.make_sound(alert_stereo)
+
+        # NETWORK BROADCAST - propagation sound
+        duration = 0.25
+        t = np.linspace(0, duration, int(sample_rate * duration), False)
+        # Quick rising ping for network communication
+        freq_sweep = 1000 + 500 * (t / duration)
+        broadcast = np.sin(2 * np.pi * freq_sweep * t) * 0.15 * np.exp(-t * 8)
+        broadcast = (broadcast * 32767).astype(np.int16)
+        broadcast_stereo = np.column_stack((broadcast, broadcast))
+        self.sounds['network_broadcast'] = pygame.sndarray.make_sound(broadcast_stereo)
 
     def play(self, name, volume=0.5):
         if name in self.sounds:
@@ -4869,10 +5108,11 @@ def spawn_people(maze, count, num_wardens):
     return people
 
 def spawn_sensors(maze, count):
-    """Spawn IoT sensors throughout the building."""
+    """Spawn IoT sensors throughout the building with mesh network connectivity."""
     network = IoTSensorNetwork()
     spawns = []
 
+    # Strategic sensor placement - cover key areas
     for r in range(3, ROWS - 3, 4):
         for c in range(3, COLS - 3, 4):
             if maze[r][c] != WALL:
@@ -4890,6 +5130,9 @@ def spawn_sensors(maze, count):
             sensor_type=sensor_type
         )
         network.add_sensor(sensor)
+
+    # Build mesh network connections between sensors
+    network.build_mesh_network()
 
     return network
 
@@ -5006,6 +5249,11 @@ def main():
             # Auto-trigger alarm on fire
             if disasters.hazards and not alarm.active:
                 alarm.trigger()
+
+            # Auto-trigger alarm from sensor network (sensors communicate and alert whole office)
+            if sensor_network.global_alert_level > 0.5 and not alarm.active:
+                alarm.trigger()
+                sound_system.play('network_broadcast', 0.6)  # Network triggered the alarm
 
             # Update neural predictions
             neural_update_timer += dt
