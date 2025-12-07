@@ -16,7 +16,8 @@ const CONFIG = {
     TOTAL_PEOPLE: 60,
     NUM_WARDENS: 4,
     NUM_SENSORS: 25,
-    API_URL: '/api/simulate'
+    API_URL: '/api/simulate',
+    PY_SIM_API_URL: '/api/headless'
 };
 
 // Tile types
@@ -56,6 +57,11 @@ const COLORS = {
     FIRE_MID: '#ffdc50',
     FIRE_OUTER: '#ff6414',
     SMOKE: '#464650',
+    BOMB: '#ffcf5d',
+    BOMB_GLOW: '#ff8c00',
+    WATER: '#2b84ff',
+    WATER_DARK: '#1a4fa3',
+    EARTHQUAKE: '#cfd5dd',
 
     // Pheromones
     SAFE_PHEROMONE: 'rgba(0, 255, 136, 0.3)',
@@ -87,6 +93,11 @@ const gameState = {
     people: [],
     sensors: [],
     fires: [],
+    bombs: [],
+    floods: [],
+    earthquakeActive: false,
+    earthquakeTimer: 0,
+    earthquakeEpicenter: null,
     smoke: {},
     predictions: [],
 
@@ -126,8 +137,29 @@ const gameState = {
     selectedTool: 'fire',
 
     // Screen shake
-    shake: { x: 0, y: 0, intensity: 0 }
+    shake: { x: 0, y: 0, intensity: 0 },
+
+    // Python headless telemetry
+    pythonTelemetry: {
+        loading: false,
+        error: '',
+        stats: null,
+        lastRun: null
+    }
 };
+
+// Utility helpers
+function inBounds(row, col) {
+    return row > 0 && row < CONFIG.ROWS - 1 && col > 0 && col < CONFIG.COLS - 1;
+}
+
+function isFlooded(row, col) {
+    return gameState.floods.some(f => f.row === row && f.col === col);
+}
+
+function hasBomb(row, col) {
+    return gameState.bombs.some(b => b.row === row && b.col === col);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CANVAS & RENDERING
@@ -378,6 +410,48 @@ function drawSmoke(row, col, level) {
     ctx.restore();
 }
 
+function drawFlood(flood) {
+    const x = flood.col * tileSize + (gameState.shake?.x || 0);
+    const y = flood.row * tileSize + (gameState.shake?.y || 0);
+    const depth = Math.min(1.2, flood.depth || 0.6);
+    const wave = Math.sin(gameState.time * 5 + flood.col + flood.row) * 0.1;
+
+    ctx.save();
+    ctx.fillStyle = `rgba(43, 132, 255, ${0.35 + depth * 0.25})`;
+    ctx.fillRect(x, y + tileSize * (0.15 - wave), tileSize, tileSize);
+    ctx.fillStyle = `rgba(255, 255, 255, ${0.08 + depth * 0.05})`;
+    ctx.fillRect(x, y + tileSize * 0.6, tileSize, tileSize * 0.4);
+    ctx.strokeStyle = COLORS.WATER_DARK;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x, y, tileSize, tileSize);
+    ctx.restore();
+}
+
+function drawBomb(bomb) {
+    const x = bomb.col * tileSize + (gameState.shake?.x || 0);
+    const y = bomb.row * tileSize + (gameState.shake?.y || 0);
+    const pulse = Math.sin(gameState.time * 8 + (bomb.timer || 0)) * 0.5 + 0.5;
+
+    ctx.save();
+    ctx.fillStyle = '#1c1c1c';
+    ctx.fillRect(x + 3, y + 3, tileSize - 6, tileSize - 6);
+    ctx.fillStyle = `rgba(255, 207, 93, ${0.3 + 0.5 * pulse})`;
+    ctx.fillRect(x + 4, y + 4, tileSize - 8, tileSize - 8);
+    ctx.strokeStyle = COLORS.BOMB_GLOW;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 2, y + 2, tileSize - 4, tileSize - 4);
+
+    // Fuse
+    const fuseHeight = Math.max(4, tileSize * 0.6 * Math.max(0.1, (bomb.timer || 0) / 3));
+    ctx.fillStyle = COLORS.BOMB_GLOW;
+    ctx.fillRect(x + tileSize / 2 - 1, y - fuseHeight * 0.4, 2, fuseHeight * 0.6);
+    ctx.beginPath();
+    ctx.arc(x + tileSize / 2, y - fuseHeight * 0.4, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
 function drawPerson(person) {
     if (!person.alive || person.escaped) return;
 
@@ -550,6 +624,30 @@ function drawParticles() {
     ctx.restore();
 }
 
+function drawEarthquakeEffect() {
+    if (!gameState.earthquakeActive || !gameState.earthquakeEpicenter) return;
+
+    const shakeX = gameState.shake?.x || 0;
+    const shakeY = gameState.shake?.y || 0;
+    const centerX = gameState.earthquakeEpicenter.col * tileSize + tileSize / 2 + shakeX;
+    const centerY = gameState.earthquakeEpicenter.row * tileSize + tileSize / 2 + shakeY;
+    const pulse = Math.sin(gameState.time * 6) * 0.5 + 0.5;
+    const reach = Math.max(1, gameState.earthquakeTimer || 0);
+
+    ctx.save();
+    ctx.strokeStyle = `rgba(207, 213, 221, ${0.3 + 0.3 * pulse})`;
+    ctx.lineWidth = 2;
+
+    for (let i = 1; i <= 3; i++) {
+        const radius = tileSize * (i * 2 + reach * 0.4 + pulse);
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+
+    ctx.restore();
+}
+
 function render() {
     if (!ctx || !canvas) return;
 
@@ -579,6 +677,10 @@ function render() {
     // Draw predictions
     drawPredictions();
 
+    // Draw floods and bombs
+    gameState.floods.forEach(drawFlood);
+    gameState.bombs.forEach(drawBomb);
+
     // Draw smoke
     Object.entries(gameState.smoke).forEach(([key, level]) => {
         const [r, c] = key.split(',').map(Number);
@@ -602,6 +704,9 @@ function render() {
     [...gameState.people]
         .sort((a, b) => a.row - b.row)
         .forEach(drawPerson);
+
+    // Earthquake rings
+    drawEarthquakeEffect();
 
     // Alarm flash overlay
     if (gameState.stats.alarmActive) {
@@ -639,6 +744,11 @@ function updateSimulation(dt) {
 
     // Update fires
     updateFires(dt);
+
+    // Update other hazards
+    updateFloods(dt);
+    updateBombs(dt);
+    updateEarthquake(dt);
 
     // Update people
     updatePeople(dt);
@@ -711,6 +821,170 @@ function updateFires(dt) {
     }
 }
 
+function updateFloods(dt) {
+    const newFloods = [];
+    const seen = new Set(gameState.floods.map(f => `${f.row},${f.col}`));
+    let extinguished = false;
+
+    gameState.floods.forEach(flood => {
+        flood.depth = Math.min(1.5, (flood.depth || 0.6) + 0.25 * dt);
+
+        // Spread gently to neighbors
+        if (Math.random() < 0.45 * dt) {
+            const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+            const [dr, dc] = dirs[Math.floor(Math.random() * dirs.length)];
+            const nr = flood.row + dr;
+            const nc = flood.col + dc;
+
+            if (inBounds(nr, nc) && gameState.maze[nr]?.[nc] !== TILE.WALL) {
+                const key = `${nr},${nc}`;
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    newFloods.push({ row: nr, col: nc, depth: 0.5 });
+                }
+            }
+        }
+
+        // Extinguish fires on water tiles
+        const fireIndex = gameState.fires.findIndex(f => f.row === flood.row && f.col === flood.col);
+        if (fireIndex !== -1) {
+            gameState.fires.splice(fireIndex, 1);
+            extinguished = true;
+        }
+
+        // Thin smoke on flooded cells
+        const floodKey = `${flood.row},${flood.col}`;
+        if (gameState.smoke[floodKey]) {
+            gameState.smoke[floodKey] = Math.max(0, gameState.smoke[floodKey] - 0.6);
+            if (gameState.smoke[floodKey] < 0.05) delete gameState.smoke[floodKey];
+        }
+
+        // Damage sensors submerged in water
+        gameState.sensors.forEach(sensor => {
+            if (sensor.row === flood.row && sensor.col === flood.col) {
+                sensor.health -= 8 * dt;
+            }
+        });
+    });
+
+    if (extinguished) {
+        addChatMessage('system', 'Flooded tiles doused nearby flames.');
+    }
+
+    gameState.floods.push(...newFloods);
+}
+
+function updateBombs(dt) {
+    const activeBombs = [];
+
+    gameState.bombs.forEach(bomb => {
+        bomb.timer = (bomb.timer ?? 3) - dt;
+        bomb.radius = bomb.radius || 3;
+
+        if (bomb.timer <= 0) {
+            explodeBomb(bomb);
+        } else {
+            activeBombs.push(bomb);
+        }
+    });
+
+    gameState.bombs = activeBombs;
+}
+
+function explodeBomb(bomb) {
+    gameState.shake.intensity = Math.max(gameState.shake.intensity + 3, 4);
+    addChatMessage('fire', `Bomb detonated at (${bomb.row}, ${bomb.col})!`);
+    triggerAlarm();
+
+    // Damage people
+    gameState.people.forEach(person => {
+        if (!person.alive || person.escaped) return;
+
+        const dist = Math.abs(person.row - bomb.row) + Math.abs(person.col - bomb.col);
+        if (dist <= bomb.radius + 1) {
+            const damage = Math.max(10, (bomb.radius - dist + 1) * 35);
+            person.health -= damage;
+            person.state = STATE.PANICKING;
+
+            if (person.health <= 0) {
+                person.alive = false;
+                addChatMessage('death', `Person ${person.id} was lost in an explosion!`);
+            }
+        }
+    });
+
+    // Damage sensors
+    gameState.sensors.forEach(sensor => {
+        const dist = Math.abs(sensor.row - bomb.row) + Math.abs(sensor.col - bomb.col);
+        if (dist <= bomb.radius + 1) {
+            sensor.health -= 40 / Math.max(1, dist);
+            sensor.triggered = true;
+        }
+    });
+
+    // Scorch area and add smoke
+    for (let dr = -bomb.radius; dr <= bomb.radius; dr++) {
+        for (let dc = -bomb.radius; dc <= bomb.radius; dc++) {
+            const nr = bomb.row + dr;
+            const nc = bomb.col + dc;
+            if (!inBounds(nr, nc)) continue;
+
+            const dist = Math.abs(dr) + Math.abs(dc);
+            if (dist <= bomb.radius && gameState.maze[nr]?.[nc] !== TILE.WALL && gameState.maze[nr]?.[nc] !== TILE.EXIT) {
+                if (!gameState.fires.some(f => f.row === nr && f.col === nc) && Math.random() < 0.35) {
+                    gameState.fires.push({ row: nr, col: nc, age: 0, intensity: 1 });
+                }
+                const key = `${nr},${nc}`;
+                gameState.smoke[key] = (gameState.smoke[key] || 0) + 0.7;
+            }
+        }
+    }
+}
+
+function updateEarthquake(dt) {
+    if (!gameState.earthquakeActive || !gameState.earthquakeEpicenter) return;
+
+    gameState.earthquakeTimer -= dt;
+    const epic = gameState.earthquakeEpicenter;
+    const baseImpact = Math.max(0, gameState.earthquakeTimer);
+
+    // Intensify shake while active
+    gameState.shake.intensity = Math.max(
+        gameState.shake.intensity,
+        2.5 + Math.sin(gameState.time * 12) * 0.5 + baseImpact * 0.6
+    );
+
+    // Damage sensors and people based on proximity
+    gameState.sensors.forEach(sensor => {
+        const dist = Math.abs(sensor.row - epic.row) + Math.abs(sensor.col - epic.col);
+        const impact = Math.max(0, 1 - dist / 12);
+        if (impact > 0) {
+            sensor.health -= impact * 12 * dt;
+            sensor.triggered = true;
+        }
+    });
+
+    gameState.people.forEach(person => {
+        if (!person.alive || person.escaped) return;
+
+        const dist = Math.abs(person.row - epic.row) + Math.abs(person.col - epic.col);
+        const impact = Math.max(0, 1 - dist / 14);
+
+        if (impact > 0 && Math.random() < 0.8 * dt) {
+            person.health -= impact * 18;
+            if (person.state !== STATE.WARDEN) {
+                person.state = STATE.PANICKING;
+            }
+        }
+    });
+
+    if (gameState.earthquakeTimer <= 0) {
+        gameState.earthquakeActive = false;
+        gameState.earthquakeEpicenter = null;
+        addChatMessage('system', 'Earthquake tremors subside.');
+    }
+}
+
 function updatePeople(dt) {
     gameState.people.forEach(person => {
         if (!person.alive || person.escaped) return;
@@ -726,6 +1000,35 @@ function updatePeople(dt) {
         const smokeLevel = gameState.smoke[`${person.row},${person.col}`] || 0;
         if (smokeLevel > 0.5) {
             person.health -= smokeLevel * 10 * dt;
+        }
+
+        // Check flood effects
+        if (isFlooded(person.row, person.col)) {
+            person.health -= 6 * dt;
+            if (!person.isWarden) {
+                person.state = STATE.PANICKING;
+            }
+        }
+
+        // Panic near ticking bombs
+        const nearBomb = gameState.bombs.some(b =>
+            Math.abs(b.row - person.row) + Math.abs(b.col - person.col) <= 2
+        );
+        if (nearBomb && !person.isWarden) {
+            person.state = STATE.PANICKING;
+        }
+
+        // Earthquake shake damage
+        if (gameState.earthquakeActive && gameState.earthquakeEpicenter) {
+            const dist = Math.abs(person.row - gameState.earthquakeEpicenter.row) +
+                Math.abs(person.col - gameState.earthquakeEpicenter.col);
+            const impact = Math.max(0, 1 - dist / 18);
+            if (impact > 0 && Math.random() < 0.6 * dt) {
+                person.health -= impact * 12;
+                if (!person.isWarden) {
+                    person.state = STATE.PANICKING;
+                }
+            }
         }
 
         // Check death
@@ -809,11 +1112,15 @@ function moveTowardsExit(person, dt) {
         const tile = gameState.maze[newRow]?.[newCol];
         if (tile === TILE.WALL) continue;
 
+        // Avoid stepping on bombs
+        if (hasBomb(newRow, newCol)) continue;
+
         // Check for fire
         if (gameState.fires.some(f => f.row === newRow && f.col === newCol)) continue;
 
         // Move with probability based on speed
-        const speed = person.isWarden ? 1.2 : (person.state === STATE.PANICKING ? 1.3 : 1.0);
+        const floodSlow = isFlooded(newRow, newCol) ? 0.5 : 1;
+        const speed = (person.isWarden ? 1.2 : (person.state === STATE.PANICKING ? 1.3 : 1.0)) * floodSlow;
         if (Math.random() < 0.1 * speed * dt * 60) {
             person.row = newRow;
             person.col = newCol;
@@ -988,8 +1295,19 @@ function updateUI() {
     // Fire stats
     document.getElementById('fire-count').textContent = gameState.fires.length;
     document.getElementById('smoke-zones').textContent = Object.keys(gameState.smoke).length;
+    document.getElementById('bomb-count').textContent = gameState.bombs.length;
+    document.getElementById('flood-tiles').textContent = gameState.floods.length;
+    document.getElementById('earthquake-status').textContent =
+        gameState.earthquakeActive ? 'Tremors' : 'Stable';
 
-    const dangerLevel = Math.min(gameState.fires.length * 10 + Object.keys(gameState.smoke).length / 10, 100);
+    const dangerLevel = Math.min(
+        gameState.fires.length * 10 +
+        Object.keys(gameState.smoke).length / 10 +
+        gameState.bombs.length * 8 +
+        gameState.floods.length * 4 +
+        (gameState.earthquakeActive ? 20 : 0),
+        100
+    );
     document.getElementById('danger-level').style.width = dangerLevel + '%';
 
     // Pheromones
@@ -1006,8 +1324,56 @@ function updateUI() {
     document.getElementById('confidence-ring').style.strokeDashoffset = offset;
     document.getElementById('confidence-percent').textContent = Math.round(confidence * 100) + '%';
 
+    updatePythonTelemetryUI();
+
     // Pause overlay
     document.getElementById('pause-overlay').classList.toggle('hidden', !gameState.paused);
+}
+
+function updatePythonTelemetryUI() {
+    const statusEl = document.getElementById('py-status');
+    if (!statusEl) return;
+
+    const data = gameState.pythonTelemetry.stats;
+    const loading = gameState.pythonTelemetry.loading;
+    const error = gameState.pythonTelemetry.error;
+
+    statusEl.textContent = loading ? 'Running...' : (error ? 'Error' : (data ? 'Complete' : 'Idle'));
+
+    const fields = [
+        ['py-steps', data?.steps_run],
+        ['py-escaped', data?.escaped],
+        ['py-deaths', data?.deaths],
+        ['py-alive', data?.alive],
+        ['py-fires', data?.fires_active],
+        ['py-confidence', data ? `${Math.round((data.neural_confidence || 0) * 100)}%` : undefined],
+        ['py-rl', data?.rl_decisions],
+        ['py-coverage', data ? `${Math.round((data.sensor_coverage || 0) * 100)}%` : undefined],
+        ['py-temp', data?.avg_temp ? data.avg_temp.toFixed(1) + 'C' : undefined],
+        ['py-mesh-nodes', data?.mesh_nodes],
+        ['py-mesh-links', data?.mesh_links],
+        ['py-mesh-degree', data?.mesh_avg_degree ? data.mesh_avg_degree.toFixed(1) : undefined],
+        ['py-mesh-broadcasts', data?.mesh_broadcast_steps]
+    ];
+
+    fields.forEach(([id, val]) => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.textContent = val !== undefined && val !== null ? val : '-';
+        }
+    });
+
+    const btn = document.getElementById('run-python-btn');
+    if (btn) {
+        btn.disabled = loading;
+        btn.textContent = loading ? 'Running...' : 'Run Python Sim';
+    }
+
+    const errorEl = document.getElementById('py-error');
+    if (errorEl) {
+        errorEl.textContent = error || '';
+        errorEl.classList.toggle('hidden', !error);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1022,6 +1388,69 @@ function addFire(row, col) {
     gameState.fires.push({ row, col, age: 0, intensity: 1 });
     gameState.shake.intensity = 2;
     addChatMessage('fire', `Fire started at (${row}, ${col})!`);
+}
+
+function addBomb(row, col) {
+    if (!inBounds(row, col) || gameState.maze[row]?.[col] === TILE.EXIT) return;
+    if (hasBomb(row, col)) return;
+
+    gameState.bombs.push({ row, col, timer: 3, radius: 3 });
+    gameState.shake.intensity = Math.max(gameState.shake.intensity, 1.5);
+    addChatMessage('fire', `Bomb armed at (${row}, ${col}) - detonation imminent!`);
+    if (!gameState.stats.alarmActive) {
+        triggerAlarm();
+    }
+}
+
+function addFlood(row, col) {
+    if (!inBounds(row, col)) return;
+    if (isFlooded(row, col)) return;
+
+    gameState.floods.push({ row, col, depth: 0.7 });
+    addChatMessage('system', `Flood surge released at (${row}, ${col}).`);
+    if (!gameState.stats.alarmActive) {
+        triggerAlarm();
+    }
+}
+
+function addEarthquake(row, col) {
+    if (!inBounds(row, col)) return;
+
+    gameState.earthquakeActive = true;
+    gameState.earthquakeTimer = 5;
+    gameState.earthquakeEpicenter = { row, col };
+    gameState.shake.intensity = 4;
+    addChatMessage('alarm', `Earthquake epicenter set at (${row}, ${col})!`);
+    triggerAlarm();
+}
+
+async function runPythonSimulation() {
+    if (gameState.pythonTelemetry.loading) return;
+
+    gameState.pythonTelemetry.loading = true;
+    gameState.pythonTelemetry.error = '';
+    updatePythonTelemetryUI();
+
+    try {
+        const response = await fetch(CONFIG.PY_SIM_API_URL);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        if (!data.success) {
+            throw new Error(data.error || 'Simulation failed');
+        }
+
+        gameState.pythonTelemetry.stats = data.stats || null;
+        gameState.pythonTelemetry.lastRun = Date.now();
+        addChatMessage('system', 'Python headless simulation completed.');
+    } catch (err) {
+        gameState.pythonTelemetry.error = err.message || 'Unknown error';
+        addChatMessage('system', `Python sim error: ${gameState.pythonTelemetry.error}`);
+    } finally {
+        gameState.pythonTelemetry.loading = false;
+        updatePythonTelemetryUI();
+    }
 }
 
 function triggerAlarm() {
@@ -1141,8 +1570,19 @@ function setupEventListeners() {
         const col = Math.floor(x / tileSize);
         const row = Math.floor(y / tileSize);
 
-        if (gameState.selectedTool === 'fire') {
-            addFire(row, col);
+        switch (gameState.selectedTool) {
+            case 'fire':
+                addFire(row, col);
+                break;
+            case 'bomb':
+                addBomb(row, col);
+                break;
+            case 'earthquake':
+                addEarthquake(row, col);
+                break;
+            case 'flood':
+                addFlood(row, col);
+                break;
         }
     });
 
@@ -1206,6 +1646,12 @@ function setupEventListeners() {
 
     // Restart button
     document.getElementById('restart-btn').addEventListener('click', resetGame);
+
+    // Python simulation trigger
+    const pythonBtn = document.getElementById('run-python-btn');
+    if (pythonBtn) {
+        pythonBtn.addEventListener('click', runPythonSimulation);
+    }
 }
 
 function selectHotbarSlot(index) {
@@ -1428,12 +1874,19 @@ function generateLocalState() {
 async function initGame() {
     // Reset state
     gameState.fires = [];
+    gameState.bombs = [];
+    gameState.floods = [];
+    gameState.earthquakeActive = false;
+    gameState.earthquakeEpicenter = null;
+    gameState.earthquakeTimer = 0;
     gameState.smoke = {};
     gameState.predictions = [];
     gameState.paused = false;
     gameState.speed = 1.0;
     gameState.time = 0;
     gameState.startTime = Date.now();
+    gameState.shake = { x: 0, y: 0, intensity: 0 };
+    gameState.pythonTelemetry = { loading: false, error: '', stats: null, lastRun: null };
     gameState.stats.escaped = 0;
     gameState.stats.deaths = 0;
     gameState.stats.alarmActive = false;
@@ -1453,7 +1906,7 @@ async function initGame() {
         // Clear chat
         document.getElementById('chat-messages').innerHTML = '';
         addChatMessage('system', 'World loaded successfully!');
-        addChatMessage('system', 'Click anywhere to place fire blocks');
+        addChatMessage('system', 'Use 1-4 to pick Fire/Bomb/Quake/Flood, then click to place hazards');
 
         gameState.startTime = Date.now();
     }, 2000);

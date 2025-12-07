@@ -84,7 +84,11 @@
                     <div class="control-list">
                         <div class="control-item">
                             <span class="key">CLICK</span>
-                            <span class="action">Place Fire</span>
+                            <span class="action">Place selected hazard</span>
+                        </div>
+                        <div class="control-item">
+                            <span class="key">1-4</span>
+                            <span class="action">Fire / Bomb / Quake / Flood</span>
                         </div>
                         <div class="control-item">
                             <span class="key">A</span>
@@ -191,7 +195,7 @@
                 <div class="panel-section">
                     <div class="section-header">
                         <div class="section-icon nether"></div>
-                        <span>FIRE STATUS</span>
+                        <span>HAZARD STATUS</span>
                     </div>
                     <div class="fire-stats">
                         <div class="fire-stat">
@@ -201,6 +205,18 @@
                         <div class="fire-stat">
                             <span class="fire-label">Smoke Zones:</span>
                             <span class="fire-value" id="smoke-zones">0</span>
+                        </div>
+                        <div class="fire-stat">
+                            <span class="fire-label">Bombs Armed:</span>
+                            <span class="fire-value" id="bomb-count">0</span>
+                        </div>
+                        <div class="fire-stat">
+                            <span class="fire-label">Flood Tiles:</span>
+                            <span class="fire-value" id="flood-tiles">0</span>
+                        </div>
+                        <div class="fire-stat">
+                            <span class="fire-label">Earthquake:</span>
+                            <span class="fire-value" id="earthquake-status">Stable</span>
                         </div>
                         <div class="fire-stat">
                             <span class="fire-label">Danger Level:</span>
@@ -258,6 +274,74 @@
                     </div>
                 </div>
 
+                <div class="panel-section">
+                    <div class="section-header">
+                        <div class="section-icon map"></div>
+                        <span>PYTHON TELEMETRY</span>
+                    </div>
+                    <div class="python-telemetry">
+                        <div class="python-top-row">
+                            <button class="minecraft-btn small" id="run-python-btn">Run Python Sim</button>
+                            <span class="python-status" id="py-status">Idle</span>
+                        </div>
+                        <div class="python-grid">
+                            <div class="python-stat">
+                                <span class="py-label">Steps:</span>
+                                <span class="py-value" id="py-steps">-</span>
+                            </div>
+                            <div class="python-stat">
+                                <span class="py-label">Escaped:</span>
+                                <span class="py-value" id="py-escaped">-</span>
+                            </div>
+                            <div class="python-stat">
+                                <span class="py-label">Deaths:</span>
+                                <span class="py-value" id="py-deaths">-</span>
+                            </div>
+                            <div class="python-stat">
+                                <span class="py-label">Alive:</span>
+                                <span class="py-value" id="py-alive">-</span>
+                            </div>
+                            <div class="python-stat">
+                                <span class="py-label">Fires:</span>
+                                <span class="py-value" id="py-fires">-</span>
+                            </div>
+                            <div class="python-stat">
+                                <span class="py-label">Neural:</span>
+                                <span class="py-value" id="py-confidence">-</span>
+                            </div>
+                            <div class="python-stat">
+                                <span class="py-label">RL Decisions:</span>
+                                <span class="py-value" id="py-rl">-</span>
+                            </div>
+                            <div class="python-stat">
+                                <span class="py-label">Sensor Cov.:</span>
+                                <span class="py-value" id="py-coverage">-</span>
+                            </div>
+                            <div class="python-stat">
+                                <span class="py-label">Avg Temp:</span>
+                                <span class="py-value" id="py-temp">-</span>
+                            </div>
+                            <div class="python-stat">
+                                <span class="py-label">Mesh Nodes:</span>
+                                <span class="py-value" id="py-mesh-nodes">-</span>
+                            </div>
+                            <div class="python-stat">
+                                <span class="py-label">Mesh Links:</span>
+                                <span class="py-value" id="py-mesh-links">-</span>
+                            </div>
+                            <div class="python-stat">
+                                <span class="py-label">Mesh Degree:</span>
+                                <span class="py-value" id="py-mesh-degree">-</span>
+                            </div>
+                            <div class="python-stat">
+                                <span class="py-label">Broadcasts:</span>
+                                <span class="py-value" id="py-mesh-broadcasts">-</span>
+                            </div>
+                        </div>
+                        <div class="python-error hidden" id="py-error"></div>
+                    </div>
+                </div>
+
                 <div class="panel-section legend-section">
                     <div class="section-header">
                         <div class="section-icon map"></div>
@@ -289,6 +373,18 @@
                             <span>Fire</span>
                         </div>
                         <div class="legend-item">
+                            <div class="legend-block bomb"></div>
+                            <span>Bomb</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-block earthquake"></div>
+                            <span>Earthquake</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-block flood"></div>
+                            <span>Flood</span>
+                        </div>
+                        <div class="legend-item">
                             <div class="legend-person normal"></div>
                             <span>Person</span>
                         </div>
@@ -307,20 +403,19 @@
                 <div class="slot-icon fire-block"></div>
                 <span class="slot-key">1</span>
             </div>
-            <div class="hotbar-slot" data-tool="water" title="Place Water (Coming Soon)">
-                <div class="slot-icon water-block"></div>
+            <div class="hotbar-slot" data-tool="bomb" title="Place Bomb">
+                <div class="slot-icon bomb-block"></div>
                 <span class="slot-key">2</span>
             </div>
-            <div class="hotbar-slot" data-tool="barrier" title="Place Barrier (Coming Soon)">
-                <div class="slot-icon barrier-block"></div>
+            <div class="hotbar-slot" data-tool="earthquake" title="Trigger Earthquake">
+                <div class="slot-icon quake-block"></div>
                 <span class="slot-key">3</span>
             </div>
-            <div class="hotbar-slot" data-tool="sensor" title="Place Sensor (Coming Soon)">
-                <div class="slot-icon sensor-block"></div>
+            <div class="hotbar-slot" data-tool="flood" title="Release Flood">
+                <div class="slot-icon flood-block"></div>
                 <span class="slot-key">4</span>
             </div>
-            <div class="hotbar-slot" data-tool="warden" title="Spawn Warden (Coming Soon)">
-                <div class="slot-icon warden-block"></div>
+            <div class="hotbar-slot empty">
                 <span class="slot-key">5</span>
             </div>
             <div class="hotbar-slot empty">
