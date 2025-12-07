@@ -19,7 +19,7 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 from dwight import run_headless_step
-from api.state_manager import get_state, reset_state
+from api.state_manager import get_state, reset_state, save_state
 
 
 def _clamp(value: float, min_val: float, max_val: float) -> float:
@@ -53,6 +53,7 @@ class handler(BaseHTTPRequestHandler):
 
             state = reset_state() if reset else get_state()
             snapshot = run_headless_step(state, steps=steps, dt=dt)
+            save_state(state)
 
             self._set_headers(200)
             self.wfile.write(json.dumps(snapshot).encode())

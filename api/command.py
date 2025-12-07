@@ -16,7 +16,7 @@ os.environ.setdefault("HEADLESS", "1")
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
-from api.state_manager import get_state, reset_state
+from api.state_manager import get_state, reset_state, save_state
 from dwight import run_headless_step
 
 
@@ -48,6 +48,7 @@ class handler(BaseHTTPRequestHandler):
             if reset:
                 state = reset_state()
                 snapshot = run_headless_step(state, steps=1, dt=0.033)
+                save_state(state)
                 self._set_headers(200)
                 self.wfile.write(json.dumps({'success': True, 'reset': True, 'snapshot': snapshot}).encode())
                 return
@@ -60,6 +61,7 @@ class handler(BaseHTTPRequestHandler):
                 if 0 <= row < len(state['maze']) and 0 <= col < len(state['maze'][0]):
                     disasters.add_fire(row, col)
                     snapshot = run_headless_step(state, steps=5, dt=0.033)
+                    save_state(state)
                     self._set_headers(200)
                     self.wfile.write(json.dumps({'success': True, 'snapshot': snapshot}).encode())
                     return
@@ -68,6 +70,7 @@ class handler(BaseHTTPRequestHandler):
                 if 0 <= row < len(state['maze']) and 0 <= col < len(state['maze'][0]):
                     disasters.add_bomb(row, col)
                     snapshot = run_headless_step(state, steps=5, dt=0.033)
+                    save_state(state)
                     self._set_headers(200)
                     self.wfile.write(json.dumps({'success': True, 'snapshot': snapshot}).encode())
                     return
@@ -76,6 +79,7 @@ class handler(BaseHTTPRequestHandler):
                 if 0 <= row < len(state['maze']) and 0 <= col < len(state['maze'][0]):
                     disasters.add_flood(row, col)
                     snapshot = run_headless_step(state, steps=5, dt=0.033)
+                    save_state(state)
                     self._set_headers(200)
                     self.wfile.write(json.dumps({'success': True, 'snapshot': snapshot}).encode())
                     return
@@ -84,6 +88,7 @@ class handler(BaseHTTPRequestHandler):
                 if 0 <= row < len(state['maze']) and 0 <= col < len(state['maze'][0]):
                     disasters.trigger_quake(row, col)
                     snapshot = run_headless_step(state, steps=5, dt=0.033)
+                    save_state(state)
                     self._set_headers(200)
                     self.wfile.write(json.dumps({'success': True, 'snapshot': snapshot}).encode())
                     return
@@ -91,6 +96,7 @@ class handler(BaseHTTPRequestHandler):
             if action == 'trigger_alarm':
                 alarm.trigger()
                 snapshot = run_headless_step(state, steps=2, dt=0.033)
+                save_state(state)
                 self._set_headers(200)
                 self.wfile.write(json.dumps({'success': True, 'alarm': True, 'snapshot': snapshot}).encode())
                 return
