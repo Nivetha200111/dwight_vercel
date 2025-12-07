@@ -148,6 +148,7 @@ const gameState = {
     // Selected tool
     selectedTool: 'fire',
     selectedPersonId: null,
+    povDimEnabled: false,
 
     // Screen shake
     shake: { x: 0, y: 0, intensity: 0 },
@@ -1017,10 +1018,10 @@ function render() {
     peopleSorted.forEach(drawPerson);
 
     // POV dim + dialogue bubble like Minecraft when a person is selected
-    if (gameState.selectedPersonId !== null) {
+    if (gameState.povDimEnabled && gameState.selectedPersonId !== null) {
         const person = gameState.people.find(p => p.id === gameState.selectedPersonId && p.alive && !p.escaped);
         if (person) {
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.78)'; // heavier dim when enabled
             ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
             // Re-draw the selected person on top of the dim
@@ -2235,6 +2236,10 @@ function setupEventListeners() {
             case '-':
                 changeSpeed(-0.5);
                 break;
+            case 'v':
+                gameState.povDimEnabled = !gameState.povDimEnabled;
+                addChatMessage('system', `POV dim: ${gameState.povDimEnabled ? 'ON' : 'OFF'}`);
+                break;
             case '1':
             case '2':
             case '3':
@@ -2621,6 +2626,7 @@ async function initGame() {
     gameState.startTime = Date.now();
     gameState.shake = { x: 0, y: 0, intensity: 0 };
     gameState.selectedPersonId = null;
+    gameState.povDimEnabled = false;
     gameState.pythonTelemetry = { loading: false, error: '', stats: null, lastRun: null };
     gameState.stats.escaped = 0;
     gameState.stats.deaths = 0;
