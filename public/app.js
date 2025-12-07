@@ -17,6 +17,7 @@ const CONFIG = {
     TOTAL_PEOPLE: 60,
     NUM_WARDENS: 4,
     NUM_SENSORS: 25,
+    SPRINKLER_SPACING: 6,
     API_URL: '/api/simulate',
     PY_SIM_API_URL: '/api/headless'
 };
@@ -28,7 +29,9 @@ const TILE = {
     EXIT: 2,
     DOOR: 3,
     CORRIDOR: 4,
-    CARPET: 5
+    CARPET: 5,
+    LADDER: 6, // extendable ladders/steps to escape corners
+    STROBE: 7  // virtual tile overlay for floor strobes (render-only)
 };
 
 // Person states
@@ -52,6 +55,7 @@ const COLORS = {
     CARPET: '#614141',
     EXIT: '#17dd62',
     DOOR: '#785028',
+    LADDER: '#55ddff',
 
     // Hazards
     FIRE_CORE: '#ffffc8',
@@ -68,6 +72,7 @@ const COLORS = {
     SAFE_PHEROMONE: 'rgba(0, 255, 136, 0.6)',     // more opaque for emphasis
     DANGER_PHEROMONE: 'rgba(255, 68, 68, 0.7)',   // more opaque for emphasis
     PREDICTION: 'rgba(192, 101, 255, 0.55)',
+    STROBE: 'rgba(80, 255, 180, 0.25)',
 
     // People
     NORMAL: '#6496ff',
@@ -97,6 +102,7 @@ const gameState = {
     bombs: [],
     floods: [],
     debris: [],
+    sprinklers: [],
     furniture: [],
     earthquakeActive: false,
     earthquakeTimer: 0,
@@ -111,6 +117,8 @@ const gameState = {
     showRLOverlay: true,
     showPredictionBeams: true,
     showSensorZones: true,
+    showStrobes: true,
+    showSprinklers: true,
 
     // Stats
     stats: {
@@ -144,6 +152,8 @@ const gameState = {
     showPheromones: true,
     showSensors: true,
     showDetailInset: true,
+    showStrobes: true,
+    showSprinklers: true,
 
     // Selected tool
     selectedTool: 'fire',
@@ -302,6 +312,23 @@ function drawTileSimple(row, col, tile, shakeX, shakeY) {
         case TILE.DOOR:
             ctx.fillStyle = COLORS.DOOR;
             ctx.fillRect(x, y, tileSize, tileSize);
+            break;
+
+        case TILE.LADDER:
+            ctx.fillStyle = COLORS.LADDER;
+            ctx.fillRect(x, y, tileSize, tileSize);
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(x + tileSize * 0.3, y + tileSize * 0.2);
+            ctx.lineTo(x + tileSize * 0.3, y + tileSize * 0.8);
+            ctx.moveTo(x + tileSize * 0.7, y + tileSize * 0.2);
+            ctx.lineTo(x + tileSize * 0.7, y + tileSize * 0.8);
+            ctx.moveTo(x + tileSize * 0.3, y + tileSize * 0.4);
+            ctx.lineTo(x + tileSize * 0.7, y + tileSize * 0.4);
+            ctx.moveTo(x + tileSize * 0.3, y + tileSize * 0.6);
+            ctx.lineTo(x + tileSize * 0.7, y + tileSize * 0.6);
+            ctx.stroke();
             break;
 
         default:
@@ -804,6 +831,61 @@ function drawPredictions() {
     ctx.restore();
 }
 
+function drawSprinklers() {
+    if (!gameState.showSprinklers || !gameState.sprinklers) return;
+    const pulse = Math.sin(gameState.time * 8) * 0.3 + 0.7;
+    gameState.sprinklers.forEach(s => {
+        const x = s.col * tileSize + tileSize / 2 + (gameState.shake?.x || 0);
+        const y = s.row * tileSize + tileSize / 2 + (gameState.shake?.y || 0);
+        ctx.save();
+        ctx.fillStyle = `rgba(80, 180, 255, ${0.4 + 0.2 * pulse})`;
+        ctx.beginPath();
+        ctx.arc(x, y, tileSize * 0.25, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = `rgba(140, 210, 255, ${0.6 + 0.2 * pulse})`;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.restore();
+
+        // Spray arcs if fire is nearby
+        const hasFireNearby = gameState.fires.some(f =>
+            Math.abs(f.row - s.row) + Math.abs(f.col - s.col) <= 5
+        );
+        if (hasFireNearby) {
+            ctx.save();
+            ctx.strokeStyle = `rgba(120, 200, 255, 0.35)`;
+            ctx.lineWidth = 2;
+            for (let angle = -Math.PI / 3; angle <= Math.PI / 3; angle += Math.PI / 6) {
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                const len = tileSize * (1.5 + pulse);
+                ctx.lineTo(x + Math.cos(angle) * len, y + Math.sin(angle) * len);
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+    });
+}
+
+function drawStrobes() {
+    if (!gameState.showStrobes) return;
+    const pulse = Math.sin(gameState.time * 6) * 0.3 + 0.7;
+    ctx.fillStyle = `rgba(80, 255, 180, ${0.05 + 0.15 * pulse})`;
+    for (let r = 0; r < CONFIG.ROWS; r++) {
+        for (let c = 0; c < CONFIG.COLS; c++) {
+            if (gameState.maze[r]?.[c] === TILE.CORRIDOR) {
+                const x = c * tileSize + (gameState.shake?.x || 0);
+                const y = r * tileSize + (gameState.shake?.y || 0);
+                ctx.fillRect(x, y, tileSize, tileSize);
+                // running light line
+                ctx.fillStyle = `rgba(140, 255, 210, ${0.12 + 0.1 * pulse})`;
+                ctx.fillRect(x, y + tileSize * 0.45, tileSize, tileSize * 0.1);
+                ctx.fillStyle = `rgba(80, 255, 180, ${0.05 + 0.15 * pulse})`;
+            }
+        }
+    }
+}
+
 function drawPredictionCones() {
     if (!gameState.showPredictionBeams) return;
     ctx.save();
@@ -981,6 +1063,9 @@ function render() {
     drawPredictions();
     drawPredictionCones();
 
+    // Sprinklers overlay
+    drawSprinklers();
+
     // Draw floods and bombs
     gameState.floods.forEach(drawFlood);
     gameState.bombs.forEach(drawBomb);
@@ -992,6 +1077,9 @@ function render() {
         const [r, c] = key.split(',').map(Number);
         drawSmoke(r, c, level);
     });
+
+    // Floor strobes to guide even through smoke (drawn above smoke)
+    drawStrobes();
 
     // Draw fires
     gameState.fires.forEach(fire => {
@@ -1425,12 +1513,23 @@ function updatePeople(dt) {
 
         // Movement towards exit
         if (person.state === STATE.EVACUATING || person.state === STATE.WARDEN || person.state === STATE.PANICKING) {
-            moveTowardsExit(person, dt);
+            const moved = moveTowardsExit(person, dt);
+            if (moved) {
+                person.stuckTimer = 0;
+            } else {
+                person.stuckTimer = (person.stuckTimer || 0) + dt;
+                if (person.stuckTimer > 2.0) {
+                    if (createLadderToCorridor(person)) {
+                        person.stuckTimer = 0;
+                    }
+                }
+            }
         }
     });
 }
 
 function moveTowardsExit(person, dt) {
+    let moved = false;
     // Find nearest exit
     let nearestExit = null;
     let nearestDist = Infinity;
@@ -1492,9 +1591,46 @@ function moveTowardsExit(person, dt) {
         if (Math.random() < 0.1 * speed * dt * 60) {
             person.row = newRow;
             person.col = newCol;
+            moved = true;
         }
         break;
     }
+    return moved;
+}
+
+function createLadderToCorridor(person) {
+    // Find nearest corridor in straight or short Manhattan range and carve a ladder/door path
+    let best = null;
+    let bestDist = Infinity;
+    for (let r = 0; r < CONFIG.ROWS; r++) {
+        for (let c = 0; c < CONFIG.COLS; c++) {
+            if (gameState.maze[r]?.[c] === TILE.CORRIDOR) {
+                const dist = Math.abs(r - person.row) + Math.abs(c - person.col);
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    best = { r, c };
+                }
+            }
+        }
+    }
+    if (!best || bestDist > 12) return false;
+
+    // Carve a simple Manhattan line: first rows then cols
+    let curR = person.row;
+    let curC = person.col;
+    while (curR !== best.r || curC !== best.c) {
+        if (curR < best.r) curR++;
+        else if (curR > best.r) curR--;
+        else if (curC < best.c) curC++;
+        else if (curC > best.c) curC--;
+
+        if (gameState.maze[curR]?.[curC] === TILE.WALL) {
+            gameState.maze[curR][curC] = TILE.LADDER;
+        } else if (gameState.maze[curR]?.[curC] === TILE.CARPET || gameState.maze[curR]?.[curC] === TILE.FLOOR) {
+            gameState.maze[curR][curC] = TILE.CORRIDOR;
+        }
+    }
+    return true;
 }
 
 function updateSensors(dt) {
@@ -2209,6 +2345,14 @@ function setupEventListeners() {
                 gameState.showSensors = !gameState.showSensors;
                 addChatMessage('system', `Sensors: ${gameState.showSensors ? 'ON' : 'OFF'}`);
                 break;
+            case 'f':
+                gameState.showStrobes = !gameState.showStrobes;
+                addChatMessage('system', `Floor strobes: ${gameState.showStrobes ? 'ON' : 'OFF'}`);
+                break;
+            case 'h':
+                gameState.showSprinklers = !gameState.showSprinklers;
+                addChatMessage('system', `Sprinklers: ${gameState.showSprinklers ? 'ON' : 'OFF'}`);
+                break;
             case 'm':
                 gameState.showMesh = !gameState.showMesh;
                 addChatMessage('system', `Mesh overlay: ${gameState.showMesh ? 'ON' : 'OFF'}`);
@@ -2489,6 +2633,16 @@ function generateLocalState() {
         }
     });
 
+    // Sprinklers: grid on corridors
+    gameState.sprinklers = [];
+    for (let r = 2; r < CONFIG.ROWS - 2; r += CONFIG.SPRINKLER_SPACING) {
+        for (let c = 2; c < CONFIG.COLS - 2; c += CONFIG.SPRINKLER_SPACING) {
+            if (gameState.maze[r][c] === TILE.CORRIDOR) {
+                gameState.sprinklers.push({ row: r, col: c });
+            }
+        }
+    }
+
     // Generate people
     gameState.people = [];
     const spawns = [];
@@ -2514,18 +2668,19 @@ function generateLocalState() {
     // Wardens
     for (let i = 0; i < Math.min(CONFIG.NUM_WARDENS, corridorSpawns.length); i++) {
         const [r, c] = corridorSpawns[i];
-        gameState.people.push({
-            id: i,
-            row: r,
-            col: c,
-            state: STATE.WARDEN,
-            isWarden: true,
-            health: 100,
-            alive: true,
-            escaped: false,
-            awareness: 1
-        });
-    }
+    gameState.people.push({
+        id: i,
+        row: r,
+        col: c,
+        state: STATE.WARDEN,
+        isWarden: true,
+        health: 100,
+        alive: true,
+        escaped: false,
+        awareness: 1,
+        stuckTimer: 0
+    });
+}
 
     // Regular people
     for (let i = CONFIG.NUM_WARDENS; i < Math.min(CONFIG.TOTAL_PEOPLE, spawns.length); i++) {
@@ -2539,7 +2694,8 @@ function generateLocalState() {
             health: 100,
             alive: true,
             escaped: false,
-            awareness: 0
+            awareness: 0,
+            stuckTimer: 0
         });
     }
 
