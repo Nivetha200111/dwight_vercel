@@ -3616,11 +3616,15 @@ class Rescuer:
         self.path = []
         self.path_index = 0
         self.moving = False
-        self.speed = 150  # Fast!
+        self.speed = 200  # Very fast for zero deaths goal!
 
         self.walk_frame = 0
         self.rescue_timer = 0
+        self.rescue_start_health = None
         self.helped_count = 0
+        self.critical_saves = 0
+        self.deaths_prevented = 0
+        self.last_save_health = None
 
         # Animation
         self.jump_offset = 0
@@ -3632,9 +3636,9 @@ class Rescuer:
         best_priority = float('inf')
 
         for p in people:
-            if p.alive and not p.escaped and p.health < 70 and p.health > 0:
+            if p.alive and not p.escaped and p.health < 80 and p.health > 0:
                 # Check if not already being rescued
-                if hasattr(p, 'being_rescued') and p.being_rescued:
+                if getattr(p, 'being_rescued', False):
                     continue
 
                 # Priority: lower health = higher priority
@@ -3712,20 +3716,45 @@ class Rescuer:
         elif self.state == 'rescuing':
             self.rescue_timer += dt
 
-            # Heal the person
+            # Heal the person - FASTER healing for zero deaths goal!
             if self.target_person and self.target_person.alive:
-                self.target_person.health = min(100, self.target_person.health + 50 * dt)
+                # Track initial health for critical save detection
+                if self.rescue_start_health is None:
+                    self.rescue_start_health = self.target_person.health
+
+                # Heal at 80 HP/sec (very fast!)
+                self.target_person.health = min(100, self.target_person.health + 80 * dt)
+
+                # Healing particles effect
+                if random.random() < 0.3:
+                    sound_system.play('sensor', 0.1)  # Healing beep
 
                 # Done rescuing when health is restored
-                if self.target_person.health >= 90 or self.rescue_timer > 3.0:
+                if self.target_person.health >= 95 or self.rescue_timer > 2.0:
                     self.target_person.being_rescued = False
                     self.helped_count += 1
+
+                    start_health = self.rescue_start_health if self.rescue_start_health is not None else self.target_person.health
+                    self.last_save_health = start_health
+
+                    # Track if this was a critical save or near-death prevention
+                    if start_health < 25:
+                        self.critical_saves += 1
+                        if start_health < 12:
+                            self.deaths_prevented += 1
+                        sound_system.play('neural', 0.4)  # Special sound for critical save
+
                     sound_system.play('escape', 0.3)  # Success sound
                     self.state = 'idle'
                     self.target_person = None
+                    self.rescue_start_health = None
             else:
+                if self.target_person:
+                    self.target_person.being_rescued = False
                 self.state = 'idle'
                 self.target_person = None
+                self.rescue_start_health = None
+                self.last_save_health = None
 
         # Movement animation
         if self.moving:
@@ -3829,34 +3858,64 @@ class Rescuer:
 
 
 class RescueSystem:
-    """Manages multiple rescuers responding to emergencies."""
+    """Manages multiple rescuers responding to emergencies. GOAL: ZERO DEATHS!"""
     def __init__(self):
         self.rescuers = []
         self.spawn_cooldown = 0
-        self.max_rescuers = 3
+        self.max_rescuers = 8  # More rescuers for zero deaths goal!
 
     def update(self, dt, maze, exits, people, pathfinder, hazards, time_val, alarm_active):
         # Update existing rescuers
         for rescuer in self.rescuers:
             rescuer.update(dt, maze, people, pathfinder, hazards, time_val)
 
-        # Spawn new rescuers if needed and alarm is active
+        # Spawn new rescuers if needed - MORE AGGRESSIVE for zero deaths
         if alarm_active:
             self.spawn_cooldown -= dt
 
-            # Count people needing help
-            hurt_count = sum(1 for p in people if p.alive and not p.escaped and p.health < 50
-                           and not getattr(p, 'being_rescued', False))
+            # Count people needing help - trigger earlier at health < 80
+            hurt_people = [p for p in people if p.alive and not p.escaped and p.health < 80
+                          and not getattr(p, 'being_rescued', False)]
+            hurt_count = len(hurt_people)
+
+            # Count critical cases (health < 30) - need immediate response
+            critical_count = sum(1 for p in hurt_people if p.health < 30)
 
             # Spawn rescuer if hurt people and we have capacity
+            # Faster spawning for critical cases!
+            spawn_delay = 1.0 if critical_count > 0 else 2.0
+
             if hurt_count > 0 and len(self.rescuers) < self.max_rescuers and self.spawn_cooldown <= 0:
-                # Spawn from random exit
-                if exits:
-                    exit_pos = random.choice(exits)
-                    new_rescuer = Rescuer(len(self.rescuers), exit_pos[0], exit_pos[1])
+                # Spawn from nearest exit to the most critical person
+                if exits and hurt_people:
+                    # Find most critical person
+                    most_critical = min(hurt_people, key=lambda p: p.health)
+
+                    # Find nearest exit to them
+                    nearest_exit = min(exits, key=lambda e: abs(e[0] - most_critical.row) + abs(e[1] - most_critical.col))
+
+                    new_rescuer = Rescuer(len(self.rescuers), nearest_exit[0], nearest_exit[1])
                     self.rescuers.append(new_rescuer)
-                    self.spawn_cooldown = 5.0  # 5 second cooldown between spawns
+                    self.spawn_cooldown = spawn_delay
                     sound_system.play('rescue', 0.5)
+
+                    # Emergency siren for critical cases
+                    if critical_count > 0:
+                        sound_system.play('sensor_alert', 0.4)
+
+    def get_stats(self):
+        """Get rescue statistics for UI."""
+        active_rescuers = len([r for r in self.rescuers if r.state != 'idle'])
+        total_helped = sum(r.helped_count for r in self.rescuers)
+        critical_saves = sum(getattr(r, 'critical_saves', 0) for r in self.rescuers)
+        prevented = sum(getattr(r, 'deaths_prevented', 0) for r in self.rescuers)
+        return {
+            'active': active_rescuers,
+            'total': len(self.rescuers),
+            'helped': total_helped,
+            'critical_saves': critical_saves,
+            'deaths_prevented': prevented
+        }
 
     def draw(self, surface, shake, time_val):
         for rescuer in self.rescuers:
@@ -4027,18 +4086,39 @@ class Person:
         if not self.alive or self.escaped:
             return
 
-        # Damage
-        if (self.row, self.col) in hazards:
-            self.health -= 30 * dt
-            self.state = STATE_PANICKING
-
+        # Check if in danger zone
+        in_hazard = (self.row, self.col) in hazards
         smoke_level = smoke.get((self.row, self.col), 0)
+        near_fire = any(abs(self.row - h[0]) + abs(self.col - h[1]) <= 2 for h in hazards)
+
+        # Damage from fire
+        if in_hazard:
+            self.health -= 25 * dt  # Slightly reduced for survivability
+            self.state = STATE_PANICKING
+            sound_system.play('injury', 0.2) if random.random() < 0.02 else None
+
+        # Damage from smoke
         if smoke_level > 0.5:
-            self.health -= smoke_level * 10 * dt
+            self.health -= smoke_level * 8 * dt  # Slightly reduced
+
+        # === HEALTH REGENERATION when safe (ZERO DEATHS GOAL) ===
+        if not in_hazard and smoke_level < 0.3 and not near_fire:
+            if self.health < 100:
+                # Slow regeneration when away from danger
+                regen_rate = 5 * dt  # 5 HP/sec when safe
+                # Faster regen if being rescued
+                if getattr(self, 'being_rescued', False):
+                    regen_rate = 0  # Rescuer handles healing
+                self.health = min(100, self.health + regen_rate)
+
+        # Play panic sound occasionally
+        if self.health < 30 and random.random() < 0.01:
+            sound_system.play('panic', 0.2)
 
         if self.health <= 0:
             self.alive = False
             neural_aco.deposit_danger_pheromone((self.row, self.col), 50)
+            sound_system.play('injury', 0.5)  # Death sound
             return
 
         # Check escape
@@ -4401,7 +4481,7 @@ class Person:
             pygame.gfxdraw.filled_circle(surface, x, icon_y + int(8 * scale), 2, (255, 100, 100))
 
         # === "NEEDS HELP" INDICATOR FOR HURT PEOPLE ===
-        if self.health < 70 and self.health > 0:
+        if self.health < 80 and self.health > 0:
             help_y = head_y - head_radius - int(25 * scale)
             if self.is_warden:
                 help_y -= int(10 * scale)
@@ -5053,8 +5133,8 @@ def draw_panel(surface, stats, neural_aco, sensor_network, rl_coordinator, mesh_
         status = "PAUSED | " + status
     surface.blit(font_small.render(status, True, Colors.TEXT_DIM), (px + 10, y))
 
-def draw_bottom_bar(surface, stats, alarm_active, alarm_flash, time_val):
-    """Draw bottom status bar."""
+def draw_bottom_bar(surface, stats, alarm_active, alarm_flash, time_val, rescue_stats=None):
+    """Draw bottom status bar with ZERO DEATHS goal indicator."""
     by = MAP_HEIGHT
 
     bg_color = (40, 20, 20) if alarm_active and alarm_flash else Colors.PANEL_BG
@@ -5063,7 +5143,9 @@ def draw_bottom_bar(surface, stats, alarm_active, alarm_flash, time_val):
 
     font = pygame.font.Font(None, 20)
     font_big = pygame.font.Font(None, 28)
+    font_goal = pygame.font.Font(None, 24)
 
+    # Main stats
     color = Colors.SUCCESS if stats['deaths'] == 0 else Colors.DANGER
     text = f"ESCAPED: {stats['escaped']}/{stats['total']}  |  DEATHS: {stats['deaths']}"
     surface.blit(font_big.render(text, True, color), (15, by + 10))
@@ -5071,9 +5153,57 @@ def draw_bottom_bar(surface, stats, alarm_active, alarm_flash, time_val):
     alive = stats['total'] - stats['escaped'] - stats['deaths']
     surface.blit(font.render(f"Inside Building: {alive}", True, Colors.TEXT_DIM), (15, by + 40))
 
+    # === ZERO DEATHS GOAL INDICATOR ===
+    goal_x = MAP_WIDTH - 280
+    flash = abs(math.sin(time_val * 3))
+
+    if stats['deaths'] == 0:
+        # Goal achieved or in progress!
+        goal_color = (50, 255, 100)
+        goal_text = "ZERO DEATHS GOAL"
+        status_text = "ON TRACK!" if alive > 0 else "ACHIEVED!"
+        status_color = (100, 255, 150) if alive > 0 else (50, 255, 50)
+
+        # Glowing border
+        glow_rect = (goal_x - 5, by + 8, 180, 35)
+        pygame.draw.rect(surface, (30, 80, 40), glow_rect)
+        pygame.draw.rect(surface, goal_color, glow_rect, 2)
+    else:
+        # Goal failed
+        goal_color = (255, 80, 80)
+        goal_text = "ZERO DEATHS GOAL"
+        status_text = "FAILED"
+        status_color = (255, 100, 100)
+
+        glow_rect = (goal_x - 5, by + 8, 180, 35)
+        pygame.draw.rect(surface, (60, 20, 20), glow_rect)
+        pygame.draw.rect(surface, goal_color, glow_rect, 2)
+
+    surface.blit(font_goal.render(goal_text, True, goal_color), (goal_x, by + 12))
+    surface.blit(font.render(status_text, True, status_color), (goal_x, by + 30))
+
+    # === RESCUE STATS ===
+    if rescue_stats:
+        rescue_x = MAP_WIDTH - 90
+        rescue_color = (255, 200, 100)
+        surface.blit(font.render(f"MEDICS: {rescue_stats['active']}/{rescue_stats['total']}", True, rescue_color), (rescue_x, by + 12))
+        surface.blit(font.render(f"SAVED: {rescue_stats['helped']}", True, (100, 255, 150)), (rescue_x, by + 28))
+        crit_saves = rescue_stats.get('critical_saves', 0)
+        prevented = rescue_stats.get('deaths_prevented', 0)
+        if crit_saves > 0 or prevented > 0:
+            crit_flash = int(200 + 55 * flash)
+            combo_text = f"CRIT/PREV: {crit_saves}/{prevented}"
+            surface.blit(font.render(combo_text, True, (255, crit_flash, 100)), (rescue_x, by + 44))
+
     if alarm_active:
         alarm_color = Colors.DANGER if alarm_flash else Colors.WARNING
         surface.blit(font.render("ALARM ACTIVE - EVACUATE!", True, alarm_color), (15, by + 58))
+
+    # Hurt people count
+    hurt_count = stats.get('hurt', 0)
+    if hurt_count > 0:
+        hurt_flash = int(200 + 55 * flash)
+        surface.blit(font.render(f"NEEDS HELP: {hurt_count}", True, (255, hurt_flash, 50)), (250, by + 58))
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SPAWN FUNCTIONS
@@ -5164,7 +5294,7 @@ def main():
     # Rescue System for injured people
     rescue_system = RescueSystem()
 
-    stats = {'escaped': 0, 'deaths': 0, 'total': TOTAL_PEOPLE}
+    stats = {'escaped': 0, 'deaths': 0, 'hurt': 0, 'total': TOTAL_PEOPLE}
 
     clock = pygame.time.Clock()
     running = True
@@ -5235,7 +5365,7 @@ def main():
                     sprinkler_system = SprinklerSystem()
                     sprinkler_system.install_sprinklers(maze)
                     rescue_system.reset()
-                    stats = {'escaped': 0, 'deaths': 0, 'total': TOTAL_PEOPLE}
+                    stats = {'escaped': 0, 'deaths': 0, 'hurt': 0, 'total': TOTAL_PEOPLE}
                 elif event.key in [pygame.K_EQUALS, pygame.K_PLUS]:
                     speed = min(speed + 0.5, 5.0)
                 elif event.key == pygame.K_MINUS:
@@ -5300,6 +5430,7 @@ def main():
             # Update stats
             stats['escaped'] = sum(1 for p in people if p.escaped)
             stats['deaths'] = sum(1 for p in people if not p.alive)
+            stats['hurt'] = sum(1 for p in people if p.alive and not p.escaped and p.health < 80)
 
             if stats['escaped'] > prev_escaped:
                 sound_system.play('escape', 0.2)
@@ -5355,17 +5486,20 @@ def main():
 
         # Draw UI
         draw_panel(screen, stats, neural_aco, sensor_network, rl_coordinator, soldier_mesh, time_val, paused, speed)
-        draw_bottom_bar(screen, stats, alarm.active, alarm.flash_state, time_val)
+        rescue_stats = rescue_system.get_stats()
+        draw_bottom_bar(screen, stats, alarm.active, alarm.flash_state, time_val, rescue_stats)
 
         pygame.display.flip()
 
     pygame.quit()
     sound_system.stop_alarm()
 
+    rescue_summary = rescue_system.get_stats()
     print(f"\n{'=' * 60}")
     print(f"FINAL: Escaped {stats['escaped']}/{stats['total']}, Deaths: {stats['deaths']}")
     if stats['deaths'] == 0:
         print("PERFECT! ZERO DEATHS ACHIEVED!")
+    print(f"Rescues: helped {rescue_summary['helped']}, critical saves {rescue_summary['critical_saves']}, deaths prevented {rescue_summary['deaths_prevented']}")
     print(f"Neural Confidence Final: {neural_aco.neural_confidence:.1%}")
     print(f"RL Decisions Made: {rl_coordinator.decisions_made}")
     mesh_stats = soldier_mesh.get_stats()
@@ -5388,7 +5522,7 @@ def run_headless_simulation(steps=240, dt=1 / 30.0):
     people = spawn_people(maze, TOTAL_PEOPLE, NUM_WARDENS)
     soldier_mesh = SoldierMeshNetwork()
 
-    stats = {'escaped': 0, 'deaths': 0, 'total': TOTAL_PEOPLE}
+    stats = {'escaped': 0, 'deaths': 0, 'hurt': 0, 'total': TOTAL_PEOPLE}
 
     # Seed an ignition so the loop has meaningful activity.
     disasters.add_fire(ROWS // 2, COLS // 2)
