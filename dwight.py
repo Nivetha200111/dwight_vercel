@@ -3308,17 +3308,41 @@ class Person:
             sound_system.play('escape', 0.2)
             return
 
-        # Awareness
+        # Awareness - faster reaction to emergencies
         if self.state not in [STATE_AWARE, STATE_EVACUATING, STATE_PANICKING, STATE_WARDEN]:
+            # Alarm awareness - much faster now
             if alarm_active:
-                self.awareness += 0.15 * dt if self.state != STATE_HEADPHONES else 0.02 * dt
+                self.awareness += 0.8 * dt if self.state != STATE_HEADPHONES else 0.2 * dt
 
+            # Proximity to hazards - larger range and faster detection
             for h_pos in hazards:
                 dist = abs(self.row - h_pos[0]) + abs(self.col - h_pos[1])
-                if dist < 8:
-                    self.awareness += 0.5 / (dist + 1) * dt
+                if dist < 15:  # Increased detection range
+                    # Immediate awareness if very close
+                    if dist < 4:
+                        self.awareness = 1.0  # Instant awareness when fire is right next to you
+                    else:
+                        self.awareness += 2.5 / (dist + 1) * dt  # Much faster awareness gain
 
-            if self.awareness >= 0.7:
+            # Smoke also triggers awareness (even headphones users can see/smell smoke)
+            if smoke_level > 0.2:
+                self.awareness += smoke_level * 2.0 * dt
+
+            # Social awareness - see other people running or wardens alerting
+            for other in people:
+                if other.id == self.id:
+                    continue
+                dist = abs(self.row - other.row) + abs(self.col - other.col)
+                if dist < 6:
+                    # Wardens actively alert nearby people (even headphones users)
+                    if other.is_warden and other.state == STATE_WARDEN:
+                        self.awareness += 1.5 * dt
+                    # Seeing others evacuate or panic triggers awareness
+                    elif other.state in [STATE_EVACUATING, STATE_PANICKING]:
+                        self.awareness += 0.8 * dt
+
+            # Lower threshold for faster reaction
+            if self.awareness >= 0.5:
                 self.state = STATE_AWARE
                 return
 
