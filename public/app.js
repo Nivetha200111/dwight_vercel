@@ -1877,21 +1877,60 @@ function generateLocalState() {
         });
     }
 
-    // Generate sensors
+    // Generate sensors, stratified across the map to avoid clustering
     gameState.sensors = [];
     const sensorTypes = ['temperature', 'smoke', 'co', 'motion'];
-    const sensorCandidates = [...spawns];
-
-    // Shuffle candidates
-    for (let i = sensorCandidates.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [sensorCandidates[i], sensorCandidates[j]] = [sensorCandidates[j], sensorCandidates[i]];
-    }
+    const bucketsR = 5;
+    const bucketsC = 5;
+    const bucketHeight = Math.floor(CONFIG.ROWS / bucketsR);
+    const bucketWidth = Math.floor(CONFIG.COLS / bucketsC);
 
     let sensorId = 0;
-    for (const [r, c] of sensorCandidates) {
+    const leftover = [];
+
+    for (let br = 0; br < bucketsR; br++) {
+        for (let bc = 0; bc < bucketsC; bc++) {
+            if (sensorId >= CONFIG.NUM_SENSORS) break;
+            const rMin = br * bucketHeight;
+            const rMax = (br === bucketsR - 1) ? CONFIG.ROWS - 1 : (br + 1) * bucketHeight;
+            const cMin = bc * bucketWidth;
+            const cMax = (bc === bucketsC - 1) ? CONFIG.COLS - 1 : (bc + 1) * bucketWidth;
+
+            const candidates = spawns.filter(([r, c]) =>
+                r >= rMin && r < rMax && c >= cMin && c < cMax &&
+                gameState.maze[r][c] !== TILE.EXIT
+            );
+
+            if (candidates.length === 0) continue;
+
+            const pick = candidates[Math.floor(Math.random() * candidates.length)];
+            if (pick) {
+                const type = sensorTypes[sensorId % sensorTypes.length];
+                gameState.sensors.push({
+                    id: sensorId,
+                    row: pick[0],
+                    col: pick[1],
+                    type,
+                    value: type === 'temperature' ? 22 : 0,
+                    triggered: false,
+                    health: 100
+                });
+                sensorId++;
+            }
+
+            // Collect extras to fill remaining slots if needed
+            candidates.slice(1).forEach(item => leftover.push(item));
+        }
+    }
+
+    // If we still need sensors, fill from leftovers
+    for (let i = leftover.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [leftover[i], leftover[j]] = [leftover[j], leftover[i]];
+    }
+
+    for (const [r, c] of leftover) {
         if (sensorId >= CONFIG.NUM_SENSORS) break;
-        if (gameState.maze[r][c] === TILE.WALL || gameState.maze[r][c] === TILE.EXIT) continue;
         const type = sensorTypes[sensorId % sensorTypes.length];
         gameState.sensors.push({
             id: sensorId,

@@ -175,19 +175,56 @@ def generate_sensors(maze, count):
             if maze[r][c] in [FLOOR, CARPET, CORRIDOR, DOOR]:
                 spawns.append((r, c))
 
-    random.shuffle(spawns)
     sensor_types = ['temperature', 'smoke', 'co', 'motion']
+    buckets_r = 5
+    buckets_c = 5
+    bucket_h = ROWS // buckets_r
+    bucket_w = COLS // buckets_c
 
-    for i, (r, c) in enumerate(spawns[:count]):
+    sensor_id = 0
+    leftover = []
+
+    for br in range(buckets_r):
+        for bc in range(buckets_c):
+            if sensor_id >= count:
+                break
+            r_min = br * bucket_h
+            r_max = ROWS if br == buckets_r - 1 else (br + 1) * bucket_h
+            c_min = bc * bucket_w
+            c_max = COLS if bc == buckets_c - 1 else (bc + 1) * bucket_w
+
+            candidates = [(r, c) for (r, c) in spawns if r_min <= r < r_max and c_min <= c < c_max and maze[r][c] != EXIT]
+            if not candidates:
+                continue
+
+            pick = random.choice(candidates)
+            sensors.append({
+                "id": sensor_id,
+                "row": pick[0],
+                "col": pick[1],
+                "type": sensor_types[sensor_id % len(sensor_types)],
+                "value": random.uniform(20, 25) if sensor_types[sensor_id % len(sensor_types)] == 'temperature' else 0,
+                "triggered": False,
+                "health": 100
+            })
+            sensor_id += 1
+
+            leftover.extend(pos for pos in candidates if pos != pick)
+
+    random.shuffle(leftover)
+    for r, c in leftover:
+        if sensor_id >= count:
+            break
         sensors.append({
-            "id": i,
+            "id": sensor_id,
             "row": r,
             "col": c,
-            "type": sensor_types[i % len(sensor_types)],
-            "value": random.uniform(20, 25) if sensor_types[i % len(sensor_types)] == 'temperature' else 0,
+            "type": sensor_types[sensor_id % len(sensor_types)],
+            "value": random.uniform(20, 25) if sensor_types[sensor_id % len(sensor_types)] == 'temperature' else 0,
             "triggered": False,
             "health": 100
         })
+        sensor_id += 1
 
     return sensors
 
