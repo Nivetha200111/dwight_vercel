@@ -18,7 +18,13 @@ os.environ.setdefault("HEADLESS", "1")
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
-from dwight import run_headless_simulation
+from dwight import (
+    run_headless_simulation,
+    generate_building,
+    spawn_people,
+    TOTAL_PEOPLE,
+    NUM_WARDENS,
+)
 
 
 def _clamp(value: float, min_val: float, max_val: float) -> float:
@@ -57,13 +63,32 @@ class handler(BaseHTTPRequestHandler):
             steps = int(_clamp(steps, 1, 1500))
             dt = _clamp(dt, 1 / 120.0, 0.2)
 
-            # Run simulation
+            # Run simulation (returns stats summary)
             stats = run_headless_simulation(steps=steps, dt=dt)
+
+            # Also return a snapshot of maze/exits/people for frontend integration
+            maze, exits = generate_building()
+            people = spawn_people(maze, TOTAL_PEOPLE, NUM_WARDENS)
+            people_payload = [{
+                "id": p.id,
+                "row": p.row,
+                "col": p.col,
+                "state": getattr(p, "state", "working"),
+                "isWarden": getattr(p, "is_warden", False),
+                "health": getattr(p, "health", 100),
+                "alive": getattr(p, "alive", True),
+                "escaped": getattr(p, "escaped", False),
+            } for p in people]
+            exits_list = [[r, c] for (r, c) in exits]
 
             self._set_headers(200)
             self.wfile.write(json.dumps({
                 "success": True,
                 "stats": stats,
+                "maze": maze,
+                "exits": exits_list,
+                "people": people_payload,
+                "sensors": [],
             }).encode())
 
         except Exception as exc:

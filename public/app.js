@@ -19,6 +19,8 @@ const CONFIG = {
     NUM_SENSORS: 25,
     SPRINKLER_SPACING: 6,
     API_URL: '/api/simulate',
+    HEADLESS_URL: '/api/headless',
+    USE_BACKEND: true,
     PY_SIM_API_URL: '/api/headless'
 };
 
@@ -1548,52 +1550,67 @@ function moveTowardsExit(person, dt) {
 
     if (!nearestExit) return;
 
-    // Simple pathfinding - move towards exit
-    const dr = nearestExit[0] - person.row;
-    const dc = nearestExit[1] - person.col;
+    // Smarter move selection: pick the lowest-cost safe neighbor
+    const dirs = [
+        [1, 0], [-1, 0], [0, 1], [0, -1],
+        [0, 0] // option to wait if everything is dangerous
+    ];
 
-    // Check for obstacles
-    const moves = [];
-    if (dr > 0) moves.push([1, 0]);
-    if (dr < 0) moves.push([-1, 0]);
-    if (dc > 0) moves.push([0, 1]);
-    if (dc < 0) moves.push([0, -1]);
-
-    // Add random variation
-    if (Math.random() < 0.2) {
-        moves.push([0, 0]); // Sometimes stay still
+    const fireDistCache = {};
+    function distToNearestFire(r, c) {
+        const key = `${r},${c}`;
+        if (fireDistCache[key] !== undefined) return fireDistCache[key];
+        let best = Infinity;
+        gameState.fires.forEach(f => {
+            const d = Math.abs(f.row - r) + Math.abs(f.col - c);
+            if (d < best) best = d;
+        });
+        fireDistCache[key] = best;
+        return best;
     }
 
-    // Try each move
-    for (const [mr, mc] of moves) {
+    let bestMove = null;
+    let bestCost = Infinity;
+
+    dirs.forEach(([mr, mc]) => {
         const newRow = person.row + mr;
         const newCol = person.col + mc;
 
-        // Check bounds
-        if (newRow < 0 || newRow >= CONFIG.ROWS || newCol < 0 || newCol >= CONFIG.COLS) continue;
+        if (newRow < 0 || newRow >= CONFIG.ROWS || newCol < 0 || newCol >= CONFIG.COLS) return;
 
-        // Check tile walkability
         const tile = gameState.maze[newRow]?.[newCol];
-        if (tile === TILE.WALL) continue;
+        if (tile === TILE.WALL) return;
+        if (isDebris(newRow, newCol)) return;
+        if (hasBomb(newRow, newCol)) return;
+        if (gameState.fires.some(f => f.row === newRow && f.col === newCol)) return;
 
-        // Debris blocks movement
-        if (isDebris(newRow, newCol)) continue;
+        const distExit = Math.abs(nearestExit[0] - newRow) + Math.abs(nearestExit[1] - newCol);
+        const fireDist = distToNearestFire(newRow, newCol);
+        let firePenalty = 0;
+        if (fireDist < 2) firePenalty = 100;
+        else if (fireDist < 4) firePenalty = 30;
+        else if (fireDist < 6) firePenalty = 10;
 
-        // Avoid stepping on bombs
-        if (hasBomb(newRow, newCol)) continue;
+        // Prefer corridors/exits/doors/ladders
+        let tileBias = 0;
+        if (tile === TILE.CORRIDOR || tile === TILE.EXIT) tileBias -= 2;
+        if (tile === TILE.DOOR || tile === TILE.LADDER) tileBias -= 1;
 
-        // Check for fire
-        if (gameState.fires.some(f => f.row === newRow && f.col === newCol)) continue;
+        const cost = distExit + firePenalty + tileBias;
+        if (cost < bestCost) {
+            bestCost = cost;
+            bestMove = [newRow, newCol];
+        }
+    });
 
-        // Move with probability based on speed
-        const floodSlow = isFlooded(newRow, newCol) ? 0.5 : 1;
+    if (bestMove) {
+        const floodSlow = isFlooded(bestMove[0], bestMove[1]) ? 0.5 : 1;
         const speed = (person.isWarden ? 1.2 : (person.state === STATE.PANICKING ? 1.3 : 1.0)) * floodSlow;
         if (Math.random() < 0.1 * speed * dt * 60) {
-            person.row = newRow;
-            person.col = newCol;
+            person.row = bestMove[0];
+            person.col = bestMove[1];
             moved = true;
         }
-        break;
     }
     return moved;
 }
@@ -2444,6 +2461,32 @@ function selectHotbarSlot(index) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function fetchInitialState() {
+    // Try headless backend first
+    if (CONFIG.USE_BACKEND) {
+        try {
+            const response = await fetch(`${CONFIG.HEADLESS_URL}?steps=240&dt=0.033&extended=1`);
+            const data = await response.json();
+            if (data.success) {
+                if (data.maze) gameState.maze = data.maze;
+                if (data.exits) gameState.exits = data.exits;
+                if (data.people) gameState.people = data.people;
+                if (data.stats) {
+                    gameState.stats.escaped = data.stats.escaped || 0;
+                    gameState.stats.deaths = data.stats.deaths || 0;
+                    gameState.stats.total = data.stats.total || CONFIG.TOTAL_PEOPLE;
+                    gameState.stats.alarmActive = data.stats.alarmActive || false;
+                }
+                if (data.sensors) gameState.sensors = data.sensors;
+                setDefaultPOV();
+                populateFurniture();
+                return true;
+            }
+        } catch (error) {
+            console.warn('Headless API not available, will try simulate/local:', error);
+        }
+    }
+
+    // Fallback to simulate API
     try {
         const response = await fetch(CONFIG.API_URL);
         const data = await response.json();
@@ -2459,7 +2502,7 @@ async function fetchInitialState() {
             return true;
         }
     } catch (error) {
-        console.warn('API not available, generating locally:', error);
+        console.warn('Simulate API not available, generating locally:', error);
     }
 
     // Generate locally if API fails
