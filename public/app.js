@@ -135,11 +135,14 @@ const gameState = {
 
 let canvas, ctx;
 let canvasWidth, canvasHeight;
-let tileSize;
+let tileSize = 10; // Default tile size
 
 function initCanvas() {
     canvas = document.getElementById('game-canvas');
     ctx = canvas.getContext('2d');
+
+    // Disable image smoothing for crisp pixels
+    ctx.imageSmoothingEnabled = false;
 
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
@@ -147,12 +150,18 @@ function initCanvas() {
 
 function resizeCanvas() {
     const container = document.getElementById('canvas-container');
+    if (!container) return;
+
     const rect = container.getBoundingClientRect();
 
+    // Ensure we have valid dimensions
+    const containerWidth = rect.width || 800;
+    const containerHeight = rect.height || 600;
+
     // Calculate tile size to fit the maze
-    const maxTileWidth = Math.floor(rect.width / CONFIG.COLS);
-    const maxTileHeight = Math.floor(rect.height / CONFIG.ROWS);
-    tileSize = Math.min(maxTileWidth, maxTileHeight, 14);
+    const maxTileWidth = Math.floor(containerWidth / CONFIG.COLS);
+    const maxTileHeight = Math.floor(containerHeight / CONFIG.ROWS);
+    tileSize = Math.max(4, Math.min(maxTileWidth, maxTileHeight, 14));
 
     canvasWidth = CONFIG.COLS * tileSize;
     canvasHeight = CONFIG.ROWS * tileSize;
@@ -160,22 +169,78 @@ function resizeCanvas() {
     canvas.width = canvasWidth;
     canvas.height = canvasHeight;
 
-    // Center canvas
+    // Center canvas in container
     canvas.style.width = canvasWidth + 'px';
     canvas.style.height = canvasHeight + 'px';
     canvas.style.position = 'absolute';
     canvas.style.left = '50%';
     canvas.style.top = '50%';
     canvas.style.transform = 'translate(-50%, -50%)';
+
+    // Re-disable smoothing after resize
+    if (ctx) {
+        ctx.imageSmoothingEnabled = false;
+    }
+
+    console.log('Canvas resized:', canvasWidth, 'x', canvasHeight, 'tileSize:', tileSize);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DRAWING FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Simple tile drawing that doesn't depend on gameState.shake
+function drawTileSimple(row, col, tile, shakeX, shakeY) {
+    const x = col * tileSize + (shakeX || 0);
+    const y = row * tileSize + (shakeY || 0);
+
+    switch (tile) {
+        case TILE.FLOOR:
+            ctx.fillStyle = (row + col) % 2 === 0 ? COLORS.FLOOR : COLORS.FLOOR_ALT;
+            ctx.fillRect(x, y, tileSize, tileSize);
+            break;
+
+        case TILE.WALL:
+            ctx.fillStyle = COLORS.WALL;
+            ctx.fillRect(x, y, tileSize, tileSize);
+            ctx.fillStyle = COLORS.WALL_HIGHLIGHT;
+            ctx.fillRect(x, y, tileSize, 2);
+            ctx.fillRect(x, y, 2, tileSize);
+            break;
+
+        case TILE.CORRIDOR:
+            ctx.fillStyle = COLORS.CORRIDOR;
+            ctx.fillRect(x, y, tileSize, tileSize);
+            break;
+
+        case TILE.CARPET:
+            ctx.fillStyle = COLORS.CARPET;
+            ctx.fillRect(x, y, tileSize, tileSize);
+            break;
+
+        case TILE.EXIT:
+            const glow = Math.sin(gameState.time * 4) * 0.3 + 0.7;
+            ctx.fillStyle = COLORS.EXIT;
+            ctx.fillRect(x, y, tileSize, tileSize);
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x + 1, y + 1, tileSize - 2, tileSize - 2);
+            break;
+
+        case TILE.DOOR:
+            ctx.fillStyle = COLORS.DOOR;
+            ctx.fillRect(x, y, tileSize, tileSize);
+            break;
+
+        default:
+            ctx.fillStyle = COLORS.FLOOR;
+            ctx.fillRect(x, y, tileSize, tileSize);
+    }
+}
+
 function drawTile(row, col, tile) {
-    const x = col * tileSize + gameState.shake.x;
-    const y = row * tileSize + gameState.shake.y;
+    const x = col * tileSize + (gameState.shake?.x || 0);
+    const y = row * tileSize + (gameState.shake?.y || 0);
 
     ctx.save();
 
@@ -263,8 +328,8 @@ function drawTile(row, col, tile) {
 }
 
 function drawFire(row, col, intensity = 1) {
-    const x = col * tileSize + gameState.shake.x;
-    const y = row * tileSize + gameState.shake.y;
+    const x = col * tileSize + (gameState.shake?.x || 0);
+    const y = row * tileSize + (gameState.shake?.y || 0);
     const time = gameState.time;
 
     ctx.save();
@@ -304,8 +369,8 @@ function drawFire(row, col, intensity = 1) {
 function drawSmoke(row, col, level) {
     if (level < 0.1) return;
 
-    const x = col * tileSize + gameState.shake.x;
-    const y = row * tileSize + gameState.shake.y;
+    const x = col * tileSize + (gameState.shake?.x || 0);
+    const y = row * tileSize + (gameState.shake?.y || 0);
 
     ctx.save();
     ctx.fillStyle = `rgba(70, 70, 80, ${Math.min(level * 0.6, 0.8)})`;
@@ -316,8 +381,8 @@ function drawSmoke(row, col, level) {
 function drawPerson(person) {
     if (!person.alive || person.escaped) return;
 
-    const x = person.col * tileSize + tileSize / 2 + gameState.shake.x;
-    const y = person.row * tileSize + tileSize / 2 + gameState.shake.y;
+    const x = person.col * tileSize + tileSize / 2 + (gameState.shake?.x || 0);
+    const y = person.row * tileSize + tileSize / 2 + (gameState.shake?.y || 0);
     const size = tileSize * 0.6;
 
     ctx.save();
@@ -385,8 +450,8 @@ function drawPerson(person) {
 function drawSensor(sensor) {
     if (sensor.health <= 0) return;
 
-    const x = sensor.col * tileSize + tileSize / 2 + gameState.shake.x;
-    const y = sensor.row * tileSize + tileSize / 2 + gameState.shake.y;
+    const x = sensor.col * tileSize + tileSize / 2 + (gameState.shake?.x || 0);
+    const y = sensor.row * tileSize + tileSize / 2 + (gameState.shake?.y || 0);
     const radius = tileSize * 0.25;
 
     ctx.save();
@@ -437,8 +502,8 @@ function drawPheromones() {
             const danger = gameState.neural.dangerPheromone;
 
             if (safe > 0.3) {
-                const x = c * tileSize + gameState.shake.x;
-                const y = r * tileSize + gameState.shake.y;
+                const x = c * tileSize + (gameState.shake?.x || 0);
+                const y = r * tileSize + (gameState.shake?.y || 0);
                 ctx.fillStyle = COLORS.SAFE_PHEROMONE;
                 ctx.fillRect(x, y, tileSize, tileSize);
             }
@@ -454,8 +519,8 @@ function drawPredictions() {
     ctx.save();
 
     gameState.predictions.forEach(pred => {
-        const x = pred.col * tileSize + gameState.shake.x;
-        const y = pred.row * tileSize + gameState.shake.y;
+        const x = pred.col * tileSize + (gameState.shake?.x || 0);
+        const y = pred.row * tileSize + (gameState.shake?.y || 0);
         const pulse = Math.sin(gameState.time * 4) * 0.3 + 0.7;
 
         ctx.fillStyle = `rgba(192, 101, 255, ${0.3 * pred.prob * pulse})`;
@@ -477,7 +542,7 @@ function drawParticles() {
 
             ctx.fillStyle = Math.random() > 0.5 ? COLORS.FIRE_MID : COLORS.FIRE_OUTER;
             ctx.beginPath();
-            ctx.arc(x + gameState.shake.x, y + gameState.shake.y, size, 0, Math.PI * 2);
+            ctx.arc(x + (gameState.shake?.x || 0), y + (gameState.shake?.y || 0), size, 0, Math.PI * 2);
             ctx.fill();
         }
     });
@@ -486,16 +551,25 @@ function drawParticles() {
 }
 
 function render() {
+    if (!ctx || !canvas) return;
+
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
     // Background
     ctx.fillStyle = '#1a1a1a';
     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-    // Draw tiles
+    // Ensure shake has default values
+    const shakeX = gameState.shake?.x || 0;
+    const shakeY = gameState.shake?.y || 0;
+
+    // Draw tiles - always draw something
     for (let r = 0; r < CONFIG.ROWS; r++) {
         for (let c = 0; c < CONFIG.COLS; c++) {
-            drawTile(r, c, gameState.maze[r]?.[c] ?? TILE.FLOOR);
+            const tile = (gameState.maze[r] && gameState.maze[r][c] !== undefined)
+                ? gameState.maze[r][c]
+                : TILE.FLOOR;
+            drawTileSimple(r, c, tile, shakeX, shakeY);
         }
     }
 
@@ -551,11 +625,11 @@ function updateSimulation(dt) {
     // Update shake
     gameState.shake.intensity *= 0.9;
     if (gameState.shake.intensity > 0.01) {
-        gameState.shake.x = (Math.random() - 0.5) * gameState.shake.intensity * 10;
-        gameState.shake.y = (Math.random() - 0.5) * gameState.shake.intensity * 10;
+        (gameState.shake?.x || 0) = (Math.random() - 0.5) * gameState.shake.intensity * 10;
+        (gameState.shake?.y || 0) = (Math.random() - 0.5) * gameState.shake.intensity * 10;
     } else {
-        gameState.shake.x = 0;
-        gameState.shake.y = 0;
+        (gameState.shake?.x || 0) = 0;
+        (gameState.shake?.y || 0) = 0;
     }
 
     // Update fires
