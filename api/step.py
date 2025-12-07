@@ -18,7 +18,10 @@ os.environ.setdefault("HEADLESS", "1")
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
-from dwight import run_headless_simulation
+from dwight import init_headless_state, run_headless_step
+
+# Global persistent state (best-effort; serverless instances may recycle)
+SIM_STATE = None
 
 
 def _clamp(value: float, min_val: float, max_val: float) -> float:
@@ -45,11 +48,16 @@ class handler(BaseHTTPRequestHandler):
             qs = parse_qs(parsed.query)
             steps = int(qs.get("steps", ["120"])[0])
             dt = float(qs.get("dt", ["0.0333"])[0])
+            reset = qs.get("reset", ["0"])[0] == "1"
 
             steps = int(_clamp(steps, 1, 1500))
             dt = _clamp(dt, 1 / 120.0, 0.2)
 
-            snapshot = run_headless_simulation(steps=steps, dt=dt, full_state=True)
+            global SIM_STATE
+            if reset or SIM_STATE is None:
+                SIM_STATE = init_headless_state()
+
+            snapshot = run_headless_step(SIM_STATE, steps=steps, dt=dt)
 
             self._set_headers(200)
             self.wfile.write(json.dumps(snapshot).encode())
@@ -57,4 +65,3 @@ class handler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._set_headers(500)
             self.wfile.write(json.dumps({"success": False, "error": str(exc)}).encode())
-

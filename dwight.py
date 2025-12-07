@@ -2171,3 +2171,174 @@ def run_headless_simulation(steps=240, dt=1 / 30.0, full_state=False):
 
 if __name__ == "__main__":
     main()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STATEFUL HEADLESS STEPPER FOR API
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def init_headless_state():
+    """Initialize a persistent simulation state for incremental stepping."""
+    maze, exits = generate_building()
+    lstm_predictor = SimpleLSTMPredictor()
+    neural_aco = NeuralACO(lstm_predictor)
+    pathfinder = NeuralPathfinder(neural_aco)
+    disasters = Disasters()
+    alarm = AlarmSystem()
+    sensor_network = spawn_sensors(maze, NUM_SENSORS)
+    rl_coordinator = RLEvacuationCoordinator()
+    people = spawn_people(maze, TOTAL_PEOPLE, NUM_WARDENS)
+    rescue_system = RescueSystem()
+
+    state = {
+        'maze': maze,
+        'exits': exits,
+        'lstm_predictor': lstm_predictor,
+        'neural_aco': neural_aco,
+        'pathfinder': pathfinder,
+        'disasters': disasters,
+        'alarm': alarm,
+        'sensor_network': sensor_network,
+        'rl_coordinator': rl_coordinator,
+        'people': people,
+        'rescue_system': rescue_system,
+        'stats': {ESCAPED: 0, DEATHS: 0, TOTAL: TOTAL_PEOPLE},
+        'timers': {'neural': 0.0, 'rl': 0.0},
+        'time': 0.0,
+    }
+    return state
+
+
+def _snapshot_from_state(state):
+    """Build a JSON-serializable snapshot from a live state."""
+    maze = state['maze']
+    exits = state['exits']
+    neural_aco = state['neural_aco']
+    disasters = state['disasters']
+    alarm = state['alarm']
+    sensor_network = state['sensor_network']
+    rl_coordinator = state['rl_coordinator']
+    rescue_system = state['rescue_system']
+    stats = state['stats']
+
+    hazards_list = [
+        {'row': r, 'col': c, 'type': info.get(TYPE, FIRE), 'intensity': info.get(INTENSITY, 1.0)}
+        for (r, c), info in disasters.hazards.items()
+    ]
+    smoke_dict = {f"{r},{c}": level for (r, c), level in disasters.smoke.items()}
+    exits_list = [[r, c] for (r, c) in exits]
+    people_list = [{
+        'id': p.id,
+        'row': p.row,
+        'col': p.col,
+        'state': getattr(p, 'state', STATE_WORKING),
+        'isWarden': getattr(p, 'is_warden', False),
+        'health': getattr(p, 'health', 100),
+        'alive': getattr(p, 'alive', True),
+        'escaped': getattr(p, 'escaped', False),
+    } for p in state['people']]
+    sensors_list = []
+    for s in sensor_network.sensors.values():
+        sensors_list.append({
+            'id': s.id,
+            'row': s.row,
+            'col': s.col,
+            'type': getattr(s, 'sensor_type', ''),
+            'value': getattr(s, 'value', 0),
+            'triggered': getattr(s, 'triggered', False),
+            'health': getattr(s, 'health', 100)
+        })
+
+    sensor_snapshot = sensor_network.get_sensor_fusion_data()
+
+    return {
+        'success': True,
+        'stats': {
+            STEPS_RUN: state.get('steps_run', 0),
+            ESCAPED: stats[ESCAPED],
+            DEATHS: stats[DEATHS],
+            'alive': stats[TOTAL] - stats[ESCAPED] - stats[DEATHS],
+            'total': stats[TOTAL],
+            'alarmActive': alarm.active
+        },
+        'time': state.get('time', 0.0),
+        'maze': maze,
+        'exits': exits_list,
+        'people': people_list,
+        'hazards': hazards_list,
+        'smoke': smoke_dict,
+        'fires': disasters.get_fire_positions(),
+        'pheromones': {
+            'safe': neural_aco.safe_pheromone.tolist(),
+            'danger': neural_aco.danger_pheromone.tolist(),
+            'predicted': neural_aco.predicted_danger.tolist()
+        },
+        'neural': {
+            'confidence': neural_aco.neural_confidence
+        },
+        'rl': rl_coordinator.get_stats(),
+        'rescue': rescue_system.get_stats(),
+        'sensors': sensors_list,
+        'sensor_fusion': sensor_snapshot
+    }
+
+
+def run_headless_step(state, steps=120, dt=1 / 30.0):
+    """Advance an existing state by N steps and return a snapshot."""
+    maze = state['maze']
+    exits = state['exits']
+    lstm_predictor = state['lstm_predictor']
+    neural_aco = state['neural_aco']
+    pathfinder = state['pathfinder']
+    disasters = state['disasters']
+    alarm = state['alarm']
+    sensor_network = state['sensor_network']
+    rl_coordinator = state['rl_coordinator']
+    people = state['people']
+    rescue_system = state['rescue_system']
+    stats = state['stats']
+    timers = state['timers']
+
+    steps_run = 0
+    for _ in range(int(steps)):
+        steps_run += 1
+        state['time'] = state.get('time', 0.0) + dt
+        disasters.update(dt, maze, neural_aco)
+        alarm.update(dt)
+
+        if disasters.hazards and not alarm.active:
+            alarm.trigger()
+
+        timers['neural'] += dt
+        if timers['neural'] > 0.5:
+            fire_positions = disasters.get_fire_positions()
+            sensor_data = sensor_network.get_sensor_fusion_data()
+            neural_aco.update_predictions(fire_positions, sensor_data, maze)
+            timers['neural'] = 0.0
+
+        people_positions = [(p.row, p.col) for p in people if p.alive and not p.escaped]
+        sensor_network.update(dt, disasters.get_fire_positions(), disasters.smoke, people_positions, maze)
+
+        timers['rl'] += dt
+        if timers['rl'] > 2.0 and alarm.active:
+            wardens = [p for p in people if p.is_warden and p.alive]
+            exits_status = {e: False for e in exits}
+            rl_coordinator.step(disasters.get_fire_positions(), people, exits_status, wardens)
+            timers['rl'] = 0.0
+
+        neural_aco.evaporate()
+
+        for p in people:
+            p.update(dt, maze, exits, disasters.hazards, pathfinder,
+                     alarm.active, people, disasters.smoke, neural_aco)
+
+        rescue_system.update(dt, maze, exits, people, pathfinder, disasters.hazards, state['time'], alarm.active)
+
+        stats[ESCAPED] = sum(1 for p in people if p.escaped)
+        stats[DEATHS] = sum(1 for p in people if not p.alive)
+
+        if stats[ESCAPED] + stats[DEATHS] >= stats[TOTAL]:
+            break
+
+    state['steps_run'] = state.get('steps_run', 0) + steps_run
+    return _snapshot_from_state(state)
