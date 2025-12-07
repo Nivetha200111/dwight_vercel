@@ -1140,7 +1140,7 @@ def generate_building():
                 if maze[r][c] != CORRIDOR:
                     maze[r][c] = CARPET
 
-        # Corridor-facing doors (potentially multiple)
+        # Corridor-facing doors (place along every corridor-adjacent wall segment)
         for c in range(c1 + 1, c2):
             if r2 + 1 < ROWS and maze[r2 + 1][c] == CORRIDOR:
                 maze[r2][c] = DOOR
