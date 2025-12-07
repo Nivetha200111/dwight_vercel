@@ -4799,33 +4799,28 @@ def draw_tile(surface, row, col, maze, hazards, time_val, shake, alarm_flash):
         ])
 
     elif tile == DOOR:
-        # Wooden door with 3D panels
-        # Door frame
-        pygame.draw.rect(surface, (80, 50, 25), (x, y, TILE, TILE))
+        # Luminescent green access door (bright but distinct from exits)
+        glow = abs(math.sin(time_val * 6))  # faster pulse than exits
+        base = (60, 255, 150)
+        glow_color = (int(base[0] + 40 * glow), int(base[1]), int(base[2] + 60 * glow))
 
-        # Door surface with wood grain gradient
-        door_top = (150, 95, 50)
-        door_bottom = (100, 60, 30)
-        draw_gradient_rect(surface, (x + 2, y + 2, TILE - 4, TILE - 4), door_top, door_bottom)
+        # Door body
+        draw_gradient_rect(surface, (x, y, TILE, TILE),
+                           (glow_color[0], glow_color[1], glow_color[2]),
+                           (int(glow_color[0] * 0.5), int(glow_color[1] * 0.5), int(glow_color[2] * 0.5)))
 
-        # Door panels (recessed)
-        panel_color = (120, 75, 40)
-        panel_shadow = (90, 55, 28)
-        panel_highlight = (160, 105, 60)
+        # Glow border
+        pygame.draw.rect(surface, (20, 80, 40), (x, y, TILE, TILE))
+        pygame.draw.rect(surface, (80, 255, 160), (x + 1, y + 1, TILE - 2, TILE - 2), 2)
 
-        # Top panel
-        pygame.draw.rect(surface, panel_shadow, (x + 4, y + 4, TILE - 8, TILE // 2 - 5))
-        pygame.draw.rect(surface, panel_color, (x + 5, y + 5, TILE - 10, TILE // 2 - 7))
-        pygame.draw.line(surface, panel_highlight, (x + 5, y + 5), (x + TILE - 6, y + 5), 1)
+        # Light ribbon across center
+        ribbon_y = y + TILE // 2 - 2
+        pygame.draw.rect(surface, (180, 255, 200), (x + 3, ribbon_y, TILE - 6, 4))
 
-        # Bottom panel
-        pygame.draw.rect(surface, panel_shadow, (x + 4, y + TILE // 2 + 2, TILE - 8, TILE // 2 - 5))
-        pygame.draw.rect(surface, panel_color, (x + 5, y + TILE // 2 + 3, TILE - 10, TILE // 2 - 7))
-        pygame.draw.line(surface, panel_highlight, (x + 5, y + TILE // 2 + 3), (x + TILE - 6, y + TILE // 2 + 3), 1)
-
-        # Door handle
-        pygame.draw.circle(surface, (200, 180, 50), (x + TILE - 7, y + TILE // 2), 3)
-        pygame.gfxdraw.aacircle(surface, x + TILE - 7, y + TILE // 2, 3, (220, 200, 70))
+        # Small glow handle dot
+        handle_color = (200, 255, 220)
+        pygame.draw.circle(surface, handle_color, (x + TILE - 6, y + TILE // 2), 3)
+        pygame.gfxdraw.aacircle(surface, x + TILE - 6, y + TILE // 2, 3, handle_color)
 
     # Alarm flash with softer blend
     if alarm_flash and tile != WALL:
