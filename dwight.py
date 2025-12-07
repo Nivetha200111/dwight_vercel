@@ -3997,6 +3997,26 @@ def generate_building():
         for dr, dc in door_candidates[:3]:
             maze[dr][dc] = DOOR
 
+        # Interior doors (green) to break up large rooms for faster escape
+        if (r2 - r1) > 4 and (c2 - c1) > 4:
+            interior_candidates = []
+            r_mid = (r1 + r2) // 2
+            c_mid = (c1 + c2) // 2
+            for (ir, ic) in [
+                (r_mid, c_mid),
+                (r_mid, c_mid - 2),
+                (r_mid, c_mid + 2),
+                (r_mid - 2, c_mid),
+                (r_mid + 2, c_mid)
+            ]:
+                if r1 + 1 <= ir <= r2 - 1 and c1 + 1 <= ic <= c2 - 1:
+                    if maze[ir][ic] == CARPET:
+                        interior_candidates.append((ir, ic))
+
+            random.shuffle(interior_candidates)
+            for ir, ic in interior_candidates[:2]:
+                maze[ir][ic] = DOOR
+
     sections = [
         (2, h_corr[0] - 2, 2, v_corr[0] - 2),
         (2, h_corr[0] - 2, v_corr[0] + 2, v_corr[1] - 2),
