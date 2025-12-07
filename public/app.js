@@ -95,6 +95,7 @@ const gameState = {
     fires: [],
     bombs: [],
     floods: [],
+    debris: [],
     earthquakeActive: false,
     earthquakeTimer: 0,
     earthquakeEpicenter: null,
@@ -151,6 +152,10 @@ const gameState = {
 // Utility helpers
 function inBounds(row, col) {
     return row > 0 && row < CONFIG.ROWS - 1 && col > 0 && col < CONFIG.COLS - 1;
+}
+
+function isDebris(row, col) {
+    return gameState.debris.some(d => d.row === row && d.col === col);
 }
 
 function isFlooded(row, col) {
@@ -427,6 +432,27 @@ function drawFlood(flood) {
     ctx.restore();
 }
 
+function drawDebris(debris) {
+    const x = debris.col * tileSize + (gameState.shake?.x || 0);
+    const y = debris.row * tileSize + (gameState.shake?.y || 0);
+
+    ctx.save();
+    ctx.fillStyle = '#4a4f59';
+    ctx.fillRect(x, y, tileSize, tileSize);
+    ctx.fillStyle = '#6b707c';
+    for (let i = 0; i < 3; i++) {
+        ctx.fillRect(
+            x + Math.random() * tileSize * 0.6,
+            y + Math.random() * tileSize * 0.6,
+            3,
+            3
+        );
+    }
+    ctx.strokeStyle = '#1d1f24';
+    ctx.strokeRect(x, y, tileSize, tileSize);
+    ctx.restore();
+}
+
 function drawBomb(bomb) {
     const x = bomb.col * tileSize + (gameState.shake?.x || 0);
     const y = bomb.row * tileSize + (gameState.shake?.y || 0);
@@ -680,6 +706,7 @@ function render() {
     // Draw floods and bombs
     gameState.floods.forEach(drawFlood);
     gameState.bombs.forEach(drawBomb);
+    gameState.debris.forEach(drawDebris);
 
     // Draw smoke
     Object.entries(gameState.smoke).forEach(([key, level]) => {
@@ -896,6 +923,8 @@ function explodeBomb(bomb) {
     addChatMessage('fire', `Bomb detonated at (${bomb.row}, ${bomb.col})!`);
     triggerAlarm();
 
+    collapseArea(bomb.row, bomb.col, bomb.radius + 1, 0.5);
+
     // Damage people
     gameState.people.forEach(person => {
         if (!person.alive || person.escaped) return;
@@ -978,6 +1007,12 @@ function updateEarthquake(dt) {
         }
     });
 
+    // Collapse environment
+    if (Math.random() < 0.35 * dt) {
+        const radius = 4 + Math.floor(Math.random() * 4);
+        collapseArea(epic.row, epic.col, radius, 0.25);
+    }
+
     if (gameState.earthquakeTimer <= 0) {
         gameState.earthquakeActive = false;
         gameState.earthquakeEpicenter = null;
@@ -1008,6 +1043,12 @@ function updatePeople(dt) {
             if (!person.isWarden) {
                 person.state = STATE.PANICKING;
             }
+        }
+
+        // Debris hazards
+        if (isDebris(person.row, person.col)) {
+            person.health -= 15 * dt;
+            person.state = STATE.PANICKING;
         }
 
         // Panic near ticking bombs
@@ -1111,6 +1152,9 @@ function moveTowardsExit(person, dt) {
         // Check tile walkability
         const tile = gameState.maze[newRow]?.[newCol];
         if (tile === TILE.WALL) continue;
+
+        // Debris blocks movement
+        if (isDebris(newRow, newCol)) continue;
 
         // Avoid stepping on bombs
         if (hasBomb(newRow, newCol)) continue;
@@ -1410,6 +1454,34 @@ function addFlood(row, col) {
     addChatMessage('system', `Flood surge released at (${row}, ${col}).`);
     if (!gameState.stats.alarmActive) {
         triggerAlarm();
+    }
+}
+
+function collapseArea(row, col, radius, chance = 0.4) {
+    for (let dr = -radius; dr <= radius; dr++) {
+        for (let dc = -radius; dc <= radius; dc++) {
+            const nr = row + dr;
+            const nc = col + dc;
+            if (!inBounds(nr, nc)) continue;
+            const dist = Math.abs(dr) + Math.abs(dc);
+            if (dist > radius) continue;
+            if (gameState.maze[nr]?.[nc] === TILE.EXIT) continue;
+            if (isDebris(nr, nc)) continue;
+
+            const tile = gameState.maze[nr]?.[nc];
+            const collapseBonus = tile === TILE.WALL ? 0.25 : 0;
+            if (Math.random() < chance + collapseBonus) {
+                gameState.debris.push({ row: nr, col: nc });
+
+                // Damage sensors buried
+                gameState.sensors.forEach(sensor => {
+                    if (sensor.row === nr && sensor.col === nc) {
+                        sensor.health -= 60;
+                        sensor.triggered = true;
+                    }
+                });
+            }
+        }
     }
 }
 
@@ -1950,6 +2022,7 @@ async function initGame() {
     gameState.fires = [];
     gameState.bombs = [];
     gameState.floods = [];
+    gameState.debris = [];
     gameState.earthquakeActive = false;
     gameState.earthquakeEpicenter = null;
     gameState.earthquakeTimer = 0;
