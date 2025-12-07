@@ -87,8 +87,8 @@
                             <span class="action">Place selected hazard</span>
                         </div>
                         <div class="control-item">
-                            <span class="key">1-5</span>
-                            <span class="action">Fire / Bomb / Quake / Flood / Sensor</span>
+                            <span class="key">1-6</span>
+                            <span class="action">Fire / Bomb / Quake / Flood / Sensor / POV</span>
                         </div>
                         <div class="control-item">
                             <span class="key">A</span>
@@ -276,6 +276,29 @@
 
                 <div class="panel-section">
                     <div class="section-header">
+                        <div class="section-icon ender"></div>
+                        <span>PERSON POV</span>
+                    </div>
+                    <div class="pov-panel">
+                        <div class="pov-top">
+                            <div class="pov-name" id="pov-name">No POV selected</div>
+                            <div class="pov-status" id="pov-status">-</div>
+                        </div>
+                        <canvas id="pov-canvas" width="140" height="140"></canvas>
+                        <div class="pov-row">
+                            <span class="pov-label">Health:</span>
+                            <span class="pov-value" id="pov-health">-</span>
+                        </div>
+                <div class="pov-row">
+                    <span class="pov-label">Vision:</span>
+                    <span class="pov-value" id="pov-vision">-</span>
+                </div>
+                <div class="pov-dialogue" id="pov-dialogue">Select a person with tool 6 (POV)</div>
+            </div>
+        </div>
+
+        <div class="panel-section">
+            <div class="section-header">
                         <div class="section-icon map"></div>
                         <span>PYTHON TELEMETRY</span>
                     </div>
@@ -419,7 +442,8 @@
                 <div class="slot-icon sensor-block"></div>
                 <span class="slot-key">5</span>
             </div>
-            <div class="hotbar-slot empty">
+            <div class="hotbar-slot" data-tool="inspect" title="POV Inspect">
+                <div class="slot-icon inspect-block"></div>
                 <span class="slot-key">6</span>
             </div>
             <div class="hotbar-slot empty">

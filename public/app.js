@@ -136,6 +136,7 @@ const gameState = {
 
     // Selected tool
     selectedTool: 'fire',
+    selectedPersonId: null,
 
     // Screen shake
     shake: { x: 0, y: 0, intensity: 0 },
@@ -220,6 +221,14 @@ function resizeCanvas() {
     }
 
     console.log('Canvas resized:', canvasWidth, 'x', canvasHeight, 'tileSize:', tileSize);
+}
+
+function getPOVContext() {
+    const povCanvas = document.getElementById('pov-canvas');
+    if (!povCanvas) return null;
+    const povCtx = povCanvas.getContext('2d');
+    povCtx.imageSmoothingEnabled = false;
+    return povCtx;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -545,6 +554,76 @@ function drawPerson(person) {
     }
 
     ctx.restore();
+}
+
+function renderPOV(person) {
+    const povCtx = getPOVContext();
+    if (!povCtx) return;
+    const povCanvas = document.getElementById('pov-canvas');
+    if (!povCanvas) return;
+
+    povCtx.clearRect(0, 0, povCanvas.width, povCanvas.height);
+
+    const radius = 4;
+    const povTile = Math.floor(povCanvas.width / (radius * 2 + 1));
+
+    for (let dr = -radius; dr <= radius; dr++) {
+        for (let dc = -radius; dc <= radius; dc++) {
+            const nr = person.row + dr;
+            const nc = person.col + dc;
+            const px = (dc + radius) * povTile;
+            const py = (dr + radius) * povTile;
+
+            let color = '#444';
+            const tile = gameState.maze[nr]?.[nc];
+
+            if (tile === TILE.WALL) color = COLORS.WALL;
+            else if (tile === TILE.EXIT) color = COLORS.EXIT;
+            else if (tile === TILE.CORRIDOR) color = COLORS.CORRIDOR;
+            else if (tile === TILE.CARPET) color = COLORS.CARPET;
+            else color = COLORS.FLOOR;
+
+            povCtx.fillStyle = color;
+            povCtx.fillRect(px, py, povTile, povTile);
+
+            // Hazards overlay
+            if (gameState.fires.some(f => f.row === nr && f.col === nc)) {
+                povCtx.fillStyle = COLORS.FIRE_OUTER;
+                povCtx.fillRect(px + 3, py + 3, povTile - 6, povTile - 6);
+            }
+            if (isFlooded(nr, nc)) {
+                povCtx.fillStyle = COLORS.WATER;
+                povCtx.globalAlpha = 0.6;
+                povCtx.fillRect(px, py, povTile, povTile);
+                povCtx.globalAlpha = 1;
+            }
+            if (isDebris(nr, nc)) {
+                povCtx.fillStyle = '#4a4f59';
+                povCtx.fillRect(px + 2, py + 2, povTile - 4, povTile - 4);
+            }
+            if (hasBomb(nr, nc)) {
+                povCtx.fillStyle = COLORS.BOMB_GLOW;
+                povCtx.fillRect(px + 4, py + 4, povTile - 8, povTile - 8);
+            }
+            const smoke = gameState.smoke[`${nr},${nc}`] || 0;
+            if (smoke > 0.4) {
+                povCtx.fillStyle = `rgba(70, 70, 80, ${Math.min(smoke, 0.8)})`;
+                povCtx.fillRect(px, py, povTile, povTile);
+            }
+
+            // Other people
+            const other = gameState.people.find(p => p.row === nr && p.col === nc && p.alive && !p.escaped);
+            if (other) {
+                povCtx.fillStyle = other.isWarden ? COLORS.WARDEN : COLORS.NORMAL;
+                povCtx.fillRect(px + 4, py + 4, povTile - 8, povTile - 8);
+            }
+        }
+    }
+
+    // Center marker for POV person
+    povCtx.strokeStyle = '#fff';
+    povCtx.lineWidth = 2;
+    povCtx.strokeRect(radius * povTile + 2, radius * povTile + 2, povTile - 4, povTile - 4);
 }
 
 function drawSensor(sensor) {
@@ -1369,6 +1448,7 @@ function updateUI() {
     document.getElementById('confidence-percent').textContent = Math.round(confidence * 100) + '%';
 
     updatePythonTelemetryUI();
+    updatePOVUI();
 
     // Pause overlay
     document.getElementById('pause-overlay').classList.toggle('hidden', !gameState.paused);
@@ -1418,6 +1498,76 @@ function updatePythonTelemetryUI() {
         errorEl.textContent = error || '';
         errorEl.classList.toggle('hidden', !error);
     }
+}
+
+function updatePOVUI() {
+    const person = gameState.people.find(p => p.id === gameState.selectedPersonId);
+    const nameEl = document.getElementById('pov-name');
+    const statusEl = document.getElementById('pov-status');
+    const dialogueEl = document.getElementById('pov-dialogue');
+    const healthEl = document.getElementById('pov-health');
+    const visionEl = document.getElementById('pov-vision');
+
+    if (!nameEl || !statusEl || !dialogueEl || !healthEl || !visionEl) return;
+
+    if (!person || !person.alive || person.escaped) {
+        nameEl.textContent = 'No POV selected';
+        statusEl.textContent = '-';
+        dialogueEl.textContent = 'Select a person with tool 6 (POV)';
+        healthEl.textContent = '-';
+        visionEl.textContent = '-';
+        const povCtx = getPOVContext();
+        if (povCtx) {
+            const povCanvas = document.getElementById('pov-canvas');
+            povCtx.clearRect(0, 0, povCanvas.width, povCanvas.height);
+        }
+        return;
+    }
+
+    nameEl.textContent = `Person ${person.id}${person.isWarden ? ' (Warden)' : ''}`;
+    statusEl.textContent = `${person.state} | row ${person.row}, col ${person.col}`;
+    healthEl.textContent = `${Math.max(0, Math.round(person.health))}%`;
+
+    const smoke = gameState.smoke[`${person.row},${person.col}`] || 0;
+    const fireNearby = gameState.fires.some(f => Math.abs(f.row - person.row) + Math.abs(f.col - person.col) <= 2);
+    const debrisHere = isDebris(person.row, person.col);
+    const floodHere = isFlooded(person.row, person.col);
+
+    const visionBits = [];
+    if (smoke > 0.5) visionBits.push('smoke');
+    if (fireNearby) visionBits.push('fire nearby');
+    if (floodHere) visionBits.push('water');
+    if (debrisHere) visionBits.push('rubble');
+    visionEl.textContent = visionBits.length ? visionBits.join(', ') : 'clear';
+
+    dialogueEl.textContent = buildDialogue(person, { smoke, fireNearby, debrisHere, floodHere });
+    renderPOV(person);
+}
+
+function buildDialogue(person, context) {
+    if (!person.alive) return '...';
+    if (person.escaped) return 'Made it out!';
+
+    const lines = [];
+    if (person.isWarden) {
+        lines.push('“Stay calm, follow me!”');
+    } else if (person.state === STATE.PANICKING) {
+        lines.push('“I have to move now!”');
+    } else if (person.state === STATE.EVACUATING) {
+        lines.push('“I see the exit—keep going!”');
+    } else if (person.state === STATE.HEADPHONES) {
+        lines.push('“Huh? What’s happening?”');
+    } else {
+        lines.push('“What was that noise?”');
+    }
+
+    if (context.fireNearby) lines.push('“I smell smoke—danger close!”');
+    if (context.smoke > 0.7) lines.push('“Can’t see, smoke everywhere!”');
+    if (context.debrisHere) lines.push('“Rubble here—watch your step!”');
+    if (context.floodHere) lines.push('“Feet are soaked—water incoming!”');
+    if (person.health < 40) lines.push('“I’m hurt... need help.”');
+
+    return lines.slice(0, 2).join(' ');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1509,6 +1659,22 @@ function addSensor(row, col) {
         health: 100
     });
     addChatMessage('system', `Sensor placed at (${row}, ${col}).`);
+}
+
+function selectPersonAt(row, col) {
+    const person = gameState.people.find(p =>
+        p.alive && !p.escaped &&
+        Math.abs(p.row - row) <= 0 && Math.abs(p.col - col) <= 0
+    ) || gameState.people.find(p =>
+        p.alive && !p.escaped &&
+        Math.abs(p.row - row) + Math.abs(p.col - col) <= 1
+    );
+
+    if (person) {
+        gameState.selectedPersonId = person.id;
+        addChatMessage('system', `POV: Person ${person.id}${person.isWarden ? ' (Warden)' : ''}`);
+        updatePOVUI();
+    }
 }
 
 function addEarthquake(row, col) {
@@ -1683,6 +1849,9 @@ function setupEventListeners() {
                 break;
             case 'sensor':
                 addSensor(row, col);
+                break;
+            case 'inspect':
+                selectPersonAt(row, col);
                 break;
         }
     });
@@ -2033,6 +2202,7 @@ async function initGame() {
     gameState.time = 0;
     gameState.startTime = Date.now();
     gameState.shake = { x: 0, y: 0, intensity: 0 };
+    gameState.selectedPersonId = null;
     gameState.pythonTelemetry = { loading: false, error: '', stats: null, lastRun: null };
     gameState.stats.escaped = 0;
     gameState.stats.deaths = 0;
@@ -2053,7 +2223,7 @@ async function initGame() {
         // Clear chat
         document.getElementById('chat-messages').innerHTML = '';
         addChatMessage('system', 'World loaded successfully!');
-        addChatMessage('system', 'Use 1-5 to pick Fire/Bomb/Quake/Flood/Sensor, then click to place');
+        addChatMessage('system', 'Use 1-6 to pick Fire/Bomb/Quake/Flood/Sensor/POV, then click');
 
         gameState.startTime = Date.now();
     }, 2000);
