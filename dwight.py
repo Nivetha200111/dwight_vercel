@@ -4101,6 +4101,11 @@ class Person:
         if smoke_level > 0.5:
             self.health -= smoke_level * 8 * dt  # Slightly reduced
 
+        # Immediate alarm response: start evacuating as soon as alarm is on
+        if alarm_active and self.state not in [STATE_WARDEN, STATE_EVACUATING, STATE_PANICKING]:
+            self.awareness = 1.0
+            self.state = STATE_AWARE
+
         # === HEALTH REGENERATION when safe (ZERO DEATHS GOAL) ===
         if not in_hazard and smoke_level < 0.3 and not near_fire:
             if self.health < 100:
