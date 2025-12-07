@@ -1256,6 +1256,7 @@ class Person:
         self.speed = random.uniform(80, 110) * (1.2 if is_warden else 1.0)
 
         self.rl_target = None  # For RL coordinator
+        self.stuck_timer = 0.0
 
     def find_exit(self, exits, pathfinder, maze, hazards):
         if not exits:
@@ -1361,6 +1362,7 @@ class Person:
                 # If still no path, carve an emergency door to a corridor and retry
                 if (not self.path or self.path_index >= len(self.path)) and self.force_open_corridor_door(maze):
                     self.find_exit(exits, pathfinder, maze, hazards)
+                    self.stuck_timer = 0.0
 
                 if self.path and self.path_index < len(self.path):
                     next_pos = self.path[self.path_index]
@@ -1376,6 +1378,11 @@ class Person:
                     self.row, self.col = nr, nc
                     self.path_index += 1
                     self.moving = True
+                else:
+                    # No path and door carving failed; mark as stuck
+                    self.stuck_timer += dt
+            else:
+                self.stuck_timer += dt
 
         if self.moving:
             self.walk_frame += dt * 12
@@ -1388,9 +1395,16 @@ class Person:
             if dist < 2:
                 self.x, self.y = self.tx, self.ty
                 self.moving = False
+                self.stuck_timer = 0.0
             else:
                 self.x += (dx / dist) * speed * dt
                 self.y += (dy / dist) * speed * dt
+
+        # Emergency unstuck: if stuck too long, punch a door and repath
+        if self.stuck_timer > 3.0 and self.state in [STATE_EVACUATING, STATE_PANICKING, STATE_WARDEN]:
+            if self.force_open_corridor_door(maze):
+                self.find_exit(exits, pathfinder, maze, hazards)
+                self.stuck_timer = 0.0
 
     def draw(self, surface, shake, time_val):
         if not self.alive or self.escaped:
@@ -1545,14 +1559,14 @@ def draw_pheromones(surface, neural_aco, shake):
 
             # Safe pheromone (green)
             if safe[r, c] > 0.3:
-                alpha = min(int((safe[r, c] - 0.3) * 30), 80)
+                alpha = min(int((safe[r, c] - 0.3) * 120), 180)  # more opaque
                 overlay = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
                 overlay.fill((0, 255, 150, alpha))
                 surface.blit(overlay, (x, y))
 
             # Danger pheromone (red)
             if danger[r, c] > 0.5:
-                alpha = min(int(danger[r, c] * 15), 100)
+                alpha = min(int(danger[r, c] * 45), 200)  # more opaque
                 overlay = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
                 overlay.fill((255, 80, 80, alpha))
                 surface.blit(overlay, (x, y))
@@ -1801,6 +1815,7 @@ def main():
     running = True
     paused = False
     speed = 1.0
+    selected_person = None
 
     show_predictions = True
     show_pheromones = True
@@ -1836,8 +1851,20 @@ def main():
                         row = int((my - disasters.shake_offset[1]) // TILE)
                         if 0 < row < ROWS - 1 and 0 < col < COLS - 1:
                             if event.button == 1:
-                                disasters.add_fire(row, col)
-                                pathfinder.clear_cache()
+                                # Try selecting a person first; otherwise add fire
+                                clicked = None
+                                for p in people:
+                                    if p.alive and not p.escaped:
+                                        dx = p.x - mx
+                                        dy = p.y - my
+                                        if dx * dx + dy * dy < (TILE * 0.6) ** 2:
+                                            clicked = p
+                                            break
+                                if clicked:
+                                    selected_person = clicked
+                                else:
+                                    disasters.add_fire(row, col)
+                                    pathfinder.clear_cache()
 
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_SPACE:
@@ -1948,6 +1975,33 @@ def main():
             # Draw people
             for p in sorted(people, key=lambda x: x.y):
                 p.draw(screen, shake, time_val)
+
+            # POV overlay when a person is selected
+            if selected_person and selected_person.alive and not selected_person.escaped:
+                dim = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+                dim.fill((0, 0, 0, 140))
+                screen.blit(dim, (0, 0))
+
+                # Re-draw selected person on top
+                selected_person.draw(screen, shake, time_val)
+
+                # Dialogue bubble above the person
+                bx = int(selected_person.x + shake[0])
+                by = int(selected_person.y + shake[1] - 30)
+                font = pygame.font.Font(None, 18)
+                if selected_person.state == STATE_EVACUATING:
+                    text = "I see the exit—keep going!"
+                elif selected_person.state == STATE_PANICKING:
+                    text = "Help! Need a clear path!"
+                else:
+                    text = "Moving out!"
+
+                text_surf = font.render(text, True, (255, 255, 255))
+                bg_rect = text_surf.get_rect(center=(bx, by))
+                bg_rect.inflate_ip(8, 6)
+                pygame.draw.rect(screen, (0, 120, 90), bg_rect, border_radius=4)
+                pygame.draw.rect(screen, (0, 200, 150), bg_rect, 2, border_radius=4)
+                screen.blit(text_surf, text_surf.get_rect(center=(bx, by)))
 
             # Draw UI
             draw_panel(screen, stats, neural_aco, sensor_network, rl_coordinator, time_val, paused, speed)
