@@ -101,6 +101,14 @@ const gameState = {
     earthquakeEpicenter: null,
     smoke: {},
     predictions: [],
+    rlOverlay: {
+        arrows: [],
+        log: []
+    },
+    showMesh: true,
+    showRLOverlay: true,
+    showPredictionBeams: true,
+    showSensorZones: true,
 
     // Stats
     stats: {
@@ -669,22 +677,62 @@ function drawSensor(sensor) {
     ctx.restore();
 }
 
+function drawSensorZones() {
+    if (!gameState.showSensorZones) return;
+    ctx.save();
+    const shakeX = gameState.shake?.x || 0;
+    const shakeY = gameState.shake?.y || 0;
+    gameState.sensors.forEach(sensor => {
+        if (sensor.health <= 0) return;
+        const radiusTiles = sensor.type === 'motion' ? 5 : 4;
+        const alpha = sensor.triggered ? 0.25 : 0.08;
+        ctx.strokeStyle = sensor.triggered ? '#ff8c00' : '#00bcd4';
+        ctx.globalAlpha = alpha;
+        const rpx = radiusTiles * tileSize;
+        ctx.beginPath();
+        ctx.arc(
+            sensor.col * tileSize + tileSize / 2 + shakeX,
+            sensor.row * tileSize + tileSize / 2 + shakeY,
+            rpx,
+            0,
+            Math.PI * 2
+        );
+        ctx.stroke();
+    });
+    ctx.restore();
+}
+
 function drawPheromones() {
     if (!gameState.showPheromones) return;
 
     ctx.save();
+    const shakeX = gameState.shake?.x || 0;
+    const shakeY = gameState.shake?.y || 0;
 
-    // Draw safe pheromone trails
+    // Compute simple safe/danger maps based on exits and fires
     for (let r = 0; r < CONFIG.ROWS; r++) {
         for (let c = 0; c < CONFIG.COLS; c++) {
-            const safe = gameState.neural.safePheromone;
-            const danger = gameState.neural.dangerPheromone;
+            const tile = gameState.maze[r]?.[c];
+            if (tile === TILE.WALL) continue;
 
-            if (safe > 0.3) {
-                const x = c * tileSize + (gameState.shake?.x || 0);
-                const y = r * tileSize + (gameState.shake?.y || 0);
-                ctx.fillStyle = COLORS.SAFE_PHEROMONE;
-                ctx.fillRect(x, y, tileSize, tileSize);
+            const distExit = Math.min(
+                ...gameState.exits.map(([er, ec]) => Math.abs(er - r) + Math.abs(ec - c)),
+                999
+            );
+            const distFire = gameState.fires.length
+                ? Math.min(...gameState.fires.map(f => Math.abs(f.row - r) + Math.abs(f.col - c)))
+                : 999;
+
+            const safeVal = 1 / (distExit + 1);
+            const dangerVal = distFire < 999 ? 1 / (distFire + 1) : 0;
+
+            if (safeVal > 0.05) {
+                ctx.fillStyle = `rgba(0, 255, 136, ${Math.min(0.25, safeVal * 0.6)})`;
+                ctx.fillRect(c * tileSize + shakeX, r * tileSize + shakeY, tileSize, tileSize);
+            }
+            if (dangerVal > 0.05) {
+                ctx.fillStyle = `rgba(255, 68, 68, ${Math.min(0.35, dangerVal * 0.9)})`;
+                ctx.fillRect(c * tileSize + shakeX, r * tileSize + shakeY, tileSize, tileSize);
             }
         }
     }
@@ -709,6 +757,37 @@ function drawPredictions() {
     ctx.restore();
 }
 
+function drawPredictionCones() {
+    if (!gameState.showPredictionBeams) return;
+    ctx.save();
+    const shakeX = gameState.shake?.x || 0;
+    const shakeY = gameState.shake?.y || 0;
+    const pulse = Math.sin(gameState.time * 4) * 0.2 + 0.3;
+
+    const directions = [
+        [-1, 0],
+        [1, 0],
+        [0, -1],
+        [0, 1]
+    ];
+
+    gameState.fires.forEach(fire => {
+        directions.forEach(([dr, dc]) => {
+            for (let step = 1; step <= 6; step++) {
+                const nr = fire.row + dr * step;
+                const nc = fire.col + dc * step;
+                if (!inBounds(nr, nc)) break;
+                if (gameState.maze[nr]?.[nc] === TILE.WALL) break;
+
+                const alpha = Math.max(0.08, 0.2 - step * 0.02) + pulse * 0.05;
+                ctx.fillStyle = `rgba(192,101,255, ${alpha})`;
+                ctx.fillRect(nc * tileSize + shakeX, nr * tileSize + shakeY, tileSize, tileSize);
+            }
+        });
+    });
+    ctx.restore();
+}
+
 function drawParticles() {
     ctx.save();
 
@@ -729,6 +808,53 @@ function drawParticles() {
     ctx.restore();
 }
 
+function drawMeshOverlay() {
+    if (!gameState.showMesh) return;
+    ctx.save();
+    const nodes = gameState.people.filter(p => p.alive && !p.escaped);
+    ctx.strokeStyle = 'rgba(0, 200, 255, 0.25)';
+    ctx.lineWidth = 1;
+    nodes.forEach(a => {
+        nodes.forEach(b => {
+            if (a.id >= b.id) return;
+            const dist = Math.abs(a.row - b.row) + Math.abs(a.col - b.col);
+            if (dist <= 10) {
+                ctx.beginPath();
+                ctx.moveTo(
+                    a.col * tileSize + tileSize / 2 + (gameState.shake?.x || 0),
+                    a.row * tileSize + tileSize / 2 + (gameState.shake?.y || 0)
+                );
+                ctx.lineTo(
+                    b.col * tileSize + tileSize / 2 + (gameState.shake?.x || 0),
+                    b.row * tileSize + tileSize / 2 + (gameState.shake?.y || 0)
+                );
+                ctx.stroke();
+            }
+        });
+    });
+    ctx.restore();
+}
+
+function drawRLArrows() {
+    if (!gameState.showRLOverlay) return;
+    ctx.save();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    gameState.rlOverlay.arrows.forEach(arrow => {
+        const baseX = arrow.col * tileSize + tileSize / 2 + (gameState.shake?.x || 0);
+        const baseY = arrow.row * tileSize + tileSize / 2 + (gameState.shake?.y || 0);
+        const scale = tileSize * 0.4;
+        const dx = arrow.dx * scale;
+        const dy = arrow.dy * scale;
+
+        ctx.beginPath();
+        ctx.moveTo(baseX + dx, baseY + dy);
+        ctx.lineTo(baseX - dy * 0.5, baseY + dx * 0.5);
+        ctx.lineTo(baseX + dy * 0.5, baseY - dx * 0.5);
+        ctx.closePath();
+        ctx.fill();
+    });
+    ctx.restore();
+}
 function drawEarthquakeEffect() {
     if (!gameState.earthquakeActive || !gameState.earthquakeEpicenter) return;
 
@@ -781,6 +907,7 @@ function render() {
 
     // Draw predictions
     drawPredictions();
+    drawPredictionCones();
 
     // Draw floods and bombs
     gameState.floods.forEach(drawFlood);
@@ -805,6 +932,13 @@ function render() {
     if (gameState.showSensors) {
         gameState.sensors.forEach(drawSensor);
     }
+    drawSensorZones();
+
+    // Mesh overlay
+    drawMeshOverlay();
+
+    // RL arrows
+    drawRLArrows();
 
     // Draw people (sorted by Y for proper overlapping)
     [...gameState.people]
@@ -864,6 +998,7 @@ function updateSimulation(dt) {
 
     // Update neural predictions
     updateNeuralPredictions(dt);
+    updateRLOverlay(dt);
 
     // Update stats
     updateStats();
@@ -1348,6 +1483,39 @@ function updateNeuralPredictions(dt) {
     }
 }
 
+function updateRLOverlay(dt) {
+    // Decay arrows
+    gameState.rlOverlay.arrows.forEach(a => a.ttl -= dt);
+    gameState.rlOverlay.arrows = gameState.rlOverlay.arrows.filter(a => a.ttl > 0);
+
+    if (!gameState.showRLOverlay) return;
+    const wardens = gameState.people.filter(p => p.isWarden && p.alive && !p.escaped);
+    if (wardens.length === 0) return;
+
+    if (gameState.stats.alarmActive && Math.random() < 0.8 * dt) {
+        const w = wardens[Math.floor(Math.random() * wardens.length)];
+        const dirs = [
+            { dx: 1, dy: 0, label: 'reroute east' },
+            { dx: -1, dy: 0, label: 'hold west' },
+            { dx: 0, dy: 1, label: 'push south' },
+            { dx: 0, dy: -1, label: 'pull north' }
+        ];
+        const pick = dirs[Math.floor(Math.random() * dirs.length)];
+        gameState.rlOverlay.arrows.push({
+            row: w.row,
+            col: w.col,
+            dx: pick.dx,
+            dy: pick.dy,
+            ttl: 2.5
+        });
+        const entry = `Warden ${w.id}: ${pick.label}`;
+        gameState.rlOverlay.log.unshift(entry);
+        if (gameState.rlOverlay.log.length > 6) {
+            gameState.rlOverlay.log.pop();
+        }
+    }
+}
+
 function updateStats() {
     gameState.stats.escaped = gameState.people.filter(p => p.escaped).length;
     gameState.stats.deaths = gameState.people.filter(p => !p.alive).length;
@@ -1455,6 +1623,7 @@ function updateUI() {
 
     updatePythonTelemetryUI();
     updatePOVUI();
+    updateRLLogUI();
 
     // Pause overlay
     document.getElementById('pause-overlay').classList.toggle('hidden', !gameState.paused);
@@ -1576,6 +1745,24 @@ function buildDialogue(person, context) {
     return lines.slice(0, 2).join(' ');
 }
 
+function updateRLLogUI() {
+    const list = document.getElementById('rl-log-list');
+    if (!list) return;
+    list.innerHTML = '';
+    if (!gameState.rlOverlay.log.length) {
+        const item = document.createElement('div');
+        item.className = 'rl-log-item';
+        item.textContent = 'No decisions yet';
+        list.appendChild(item);
+        return;
+    }
+    gameState.rlOverlay.log.forEach(entry => {
+        const item = document.createElement('div');
+        item.className = 'rl-log-item';
+        item.textContent = entry;
+        list.appendChild(item);
+    });
+}
 function setDefaultPOV() {
     const candidate = gameState.people.find(p => p.alive && !p.escaped);
     if (candidate) {
@@ -1894,6 +2081,22 @@ function setupEventListeners() {
             case 's':
                 gameState.showSensors = !gameState.showSensors;
                 addChatMessage('system', `Sensors: ${gameState.showSensors ? 'ON' : 'OFF'}`);
+                break;
+            case 'm':
+                gameState.showMesh = !gameState.showMesh;
+                addChatMessage('system', `Mesh overlay: ${gameState.showMesh ? 'ON' : 'OFF'}`);
+                break;
+            case 'l':
+                gameState.showRLOverlay = !gameState.showRLOverlay;
+                addChatMessage('system', `RL overlay: ${gameState.showRLOverlay ? 'ON' : 'OFF'}`);
+                break;
+            case 'o':
+                gameState.showPredictionBeams = !gameState.showPredictionBeams;
+                addChatMessage('system', `Predictions: ${gameState.showPredictionBeams ? 'ON' : 'OFF'}`);
+                break;
+            case 'z':
+                gameState.showSensorZones = !gameState.showSensorZones;
+                addChatMessage('system', `Sensor zones: ${gameState.showSensorZones ? 'ON' : 'OFF'}`);
                 break;
             case 'r':
                 resetGame();
@@ -2230,6 +2433,7 @@ async function initGame() {
     gameState.neural.confidence = 0;
     gameState.rl.decisions = 0;
     gameState.rl.avgReward = 0;
+    gameState.rlOverlay = { arrows: [], log: [] };
 
     // Fetch or generate state
     await fetchInitialState();
