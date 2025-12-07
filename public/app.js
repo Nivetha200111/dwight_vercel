@@ -622,14 +622,19 @@ function updateSimulation(dt) {
 
     gameState.time += dt;
 
+    // Ensure shake object exists
+    if (!gameState.shake) {
+        gameState.shake = { x: 0, y: 0, intensity: 0 };
+    }
+
     // Update shake
     gameState.shake.intensity *= 0.9;
     if (gameState.shake.intensity > 0.01) {
-        (gameState.shake?.x || 0) = (Math.random() - 0.5) * gameState.shake.intensity * 10;
-        (gameState.shake?.y || 0) = (Math.random() - 0.5) * gameState.shake.intensity * 10;
+        gameState.shake.x = (Math.random() - 0.5) * gameState.shake.intensity * 10;
+        gameState.shake.y = (Math.random() - 0.5) * gameState.shake.intensity * 10;
     } else {
-        (gameState.shake?.x || 0) = 0;
-        (gameState.shake?.y || 0) = 0;
+        gameState.shake.x = 0;
+        gameState.shake.y = 0;
     }
 
     // Update fires
