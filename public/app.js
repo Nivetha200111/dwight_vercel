@@ -252,6 +252,8 @@ function drawTileSimple(row, col, tile, shakeX, shakeY) {
         case TILE.FLOOR:
             ctx.fillStyle = (row + col) % 2 === 0 ? COLORS.FLOOR : COLORS.FLOOR_ALT;
             ctx.fillRect(x, y, tileSize, tileSize);
+            ctx.fillStyle = 'rgba(0,0,0,0.08)';
+            ctx.fillRect(x + 1, y + 1, tileSize - 2, tileSize - 2);
             break;
 
         case TILE.WALL:
@@ -260,16 +262,22 @@ function drawTileSimple(row, col, tile, shakeX, shakeY) {
             ctx.fillStyle = COLORS.WALL_HIGHLIGHT;
             ctx.fillRect(x, y, tileSize, 2);
             ctx.fillRect(x, y, 2, tileSize);
+            ctx.fillStyle = 'rgba(255,255,255,0.05)';
+            ctx.fillRect(x, y, tileSize, 3);
             break;
 
         case TILE.CORRIDOR:
             ctx.fillStyle = COLORS.CORRIDOR;
             ctx.fillRect(x, y, tileSize, tileSize);
+            ctx.fillStyle = 'rgba(255,255,255,0.05)';
+            ctx.fillRect(x, y, tileSize, 2);
             break;
 
         case TILE.CARPET:
             ctx.fillStyle = COLORS.CARPET;
             ctx.fillRect(x, y, tileSize, tileSize);
+            ctx.fillStyle = 'rgba(0,0,0,0.12)';
+            ctx.fillRect(x + 1, y + 1, tileSize - 2, tileSize - 2);
             break;
 
         case TILE.EXIT:
@@ -279,6 +287,8 @@ function drawTileSimple(row, col, tile, shakeX, shakeY) {
             ctx.strokeStyle = '#fff';
             ctx.lineWidth = 1;
             ctx.strokeRect(x + 1, y + 1, tileSize - 2, tileSize - 2);
+            ctx.fillStyle = `rgba(23, 221, 98, 0.3)`;
+            ctx.fillRect(x - 1, y - 1, tileSize + 2, tileSize + 2);
             break;
 
         case TILE.DOOR:
@@ -391,6 +401,16 @@ function drawFire(row, col, intensity = 1) {
     // Base
     ctx.fillStyle = '#3d1a0a';
     ctx.fillRect(x, y, tileSize, tileSize);
+
+    // Light halo
+    const radial = ctx.createRadialGradient(
+        x + tileSize / 2, y + tileSize / 2, 2,
+        x + tileSize / 2, y + tileSize / 2, tileSize * 2
+    );
+    radial.addColorStop(0, `rgba(255,100,20,0.25)`);
+    radial.addColorStop(1, `rgba(255,100,20,0)`);
+    ctx.fillStyle = radial;
+    ctx.fillRect(x - tileSize, y - tileSize, tileSize * 3, tileSize * 3);
 
     // Animated flames
     for (let i = 0; i < 3; i++) {
@@ -808,6 +828,28 @@ function drawParticles() {
     ctx.restore();
 }
 
+function drawGrid() {
+    if (!ctx) return;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.15)';
+    ctx.lineWidth = 1;
+    const shakeX = gameState.shake?.x || 0;
+    const shakeY = gameState.shake?.y || 0;
+    for (let r = 0; r <= CONFIG.ROWS; r++) {
+        ctx.beginPath();
+        ctx.moveTo(shakeX, r * tileSize + shakeY);
+        ctx.lineTo(canvasWidth + shakeX, r * tileSize + shakeY);
+        ctx.stroke();
+    }
+    for (let c = 0; c <= CONFIG.COLS; c++) {
+        ctx.beginPath();
+        ctx.moveTo(c * tileSize + shakeX, shakeY);
+        ctx.lineTo(c * tileSize + shakeX, canvasHeight + shakeY);
+        ctx.stroke();
+    }
+    ctx.restore();
+}
+
 function drawMeshOverlay() {
     if (!gameState.showMesh) return;
     ctx.save();
@@ -887,6 +929,9 @@ function render() {
     // Background
     ctx.fillStyle = '#1a1a1a';
     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+    // Grid overlay for depth
+    drawGrid();
 
     // Ensure shake has default values
     const shakeX = gameState.shake?.x || 0;
@@ -2449,6 +2494,7 @@ async function initGame() {
         addChatMessage('system', 'World loaded successfully!');
         addChatMessage('system', 'Use 1-6 to pick Fire/Bomb/Quake/Flood/Sensor/POV, then click');
         addChatMessage('system', 'POV auto-locks to the first survivor; press 6 and click someone to swap');
+        addChatMessage('system', 'Goal: ZERO deaths — evacuate everyone safely');
 
         gameState.startTime = Date.now();
     }, 2000);
