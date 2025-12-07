@@ -20,6 +20,7 @@ const CONFIG = {
     SPRINKLER_SPACING: 6,
     API_URL: '/api/simulate',
     HEADLESS_URL: '/api/step',
+    COMMAND_URL: '/api/command',
     USE_BACKEND: true,
     PY_SIM_API_URL: '/api/headless'
 };
@@ -2053,14 +2054,24 @@ function addFire(row, col) {
     if (gameState.maze[row]?.[col] === TILE.WALL) return;
     if (gameState.fires.some(f => f.row === row && f.col === col)) return;
 
-    gameState.fires.push({ row, col, age: 0, intensity: 1 });
-    gameState.shake.intensity = 2;
-    addChatMessage('fire', `Fire started at (${row}, ${col})!`);
+    if (CONFIG.USE_BACKEND) {
+        sendCommand({ action: 'add_fire', row, col });
+    } else {
+        gameState.fires.push({ row, col, age: 0, intensity: 1 });
+        gameState.shake.intensity = 2;
+        addChatMessage('fire', `Fire started at (${row}, ${col})!`);
+        if (!gameState.stats.alarmActive) triggerAlarm();
+    }
 }
 
 function addBomb(row, col) {
     if (!inBounds(row, col) || gameState.maze[row]?.[col] === TILE.EXIT) return;
     if (hasBomb(row, col)) return;
+    if (CONFIG.USE_BACKEND) {
+        // Not supported backend-side; noop or local fallback
+        addChatMessage('system', 'Bomb placement not supported in backend mode.');
+        return;
+    }
 
     gameState.bombs.push({ row, col, timer: 3, radius: 3 });
     gameState.shake.intensity = Math.max(gameState.shake.intensity, 1.5);
@@ -2072,6 +2083,10 @@ function addBomb(row, col) {
 
 function addFlood(row, col) {
     if (!inBounds(row, col)) return;
+    if (CONFIG.USE_BACKEND) {
+        addChatMessage('system', 'Flood placement not supported in backend mode.');
+        return;
+    }
     if (isFlooded(row, col)) return;
 
     gameState.floods.push({ row, col, depth: 0.7 });
@@ -2157,6 +2172,10 @@ function selectPersonAt(row, col) {
 
 function addEarthquake(row, col) {
     if (!inBounds(row, col)) return;
+    if (CONFIG.USE_BACKEND) {
+        addChatMessage('system', 'Earthquake not supported in backend mode.');
+        return;
+    }
 
     gameState.earthquakeActive = true;
     gameState.earthquakeTimer = 5;
@@ -2198,16 +2217,20 @@ async function runPythonSimulation() {
 function triggerAlarm() {
     if (gameState.stats.alarmActive) return;
 
-    gameState.stats.alarmActive = true;
-    addChatMessage('alarm', 'EMERGENCY! ALARM ACTIVATED!');
-
-    // Wake up all wardens
-    gameState.people.forEach(p => {
-        if (p.isWarden && p.alive) {
-            p.state = STATE.WARDEN;
-            p.awareness = 1;
-        }
-    });
+    if (CONFIG.USE_BACKEND) {
+        sendCommand({ action: 'trigger_alarm' });
+        addChatMessage('alarm', 'EMERGENCY! ALARM ACTIVATED! (backend)');
+    } else {
+        gameState.stats.alarmActive = true;
+        addChatMessage('alarm', 'EMERGENCY! ALARM ACTIVATED!');
+        // Wake up all wardens
+        gameState.people.forEach(p => {
+            if (p.isWarden && p.alive) {
+                p.state = STATE.WARDEN;
+                p.awareness = 1;
+            }
+        });
+    }
 }
 
 function resetGame() {
@@ -2901,6 +2924,18 @@ async function initGame() {
     gameState.rl.decisions = 0;
     gameState.rl.avgReward = 0;
     gameState.rlOverlay = { arrows: [], log: [] };
+    // Backend sim reset
+    if (CONFIG.USE_BACKEND) {
+        try {
+            await fetch(CONFIG.COMMAND_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reset: true })
+            });
+        } catch (err) {
+            console.warn('Backend reset failed (proceeding local fallback):', err);
+        }
+    }
 
     // Fetch or generate state
     await fetchInitialState();

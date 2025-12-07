@@ -18,10 +18,8 @@ os.environ.setdefault("HEADLESS", "1")
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
-from dwight import init_headless_state, run_headless_step
-
-# Global persistent state (best-effort; serverless instances may recycle)
-SIM_STATE = None
+from dwight import run_headless_step
+from api.state_manager import get_state, reset_state
 
 
 def _clamp(value: float, min_val: float, max_val: float) -> float:
@@ -53,11 +51,8 @@ class handler(BaseHTTPRequestHandler):
             steps = int(_clamp(steps, 1, 1500))
             dt = _clamp(dt, 1 / 120.0, 0.2)
 
-            global SIM_STATE
-            if reset or SIM_STATE is None:
-                SIM_STATE = init_headless_state()
-
-            snapshot = run_headless_step(SIM_STATE, steps=steps, dt=dt)
+            state = reset_state() if reset else get_state()
+            snapshot = run_headless_step(state, steps=steps, dt=dt)
 
             self._set_headers(200)
             self.wfile.write(json.dumps(snapshot).encode())
