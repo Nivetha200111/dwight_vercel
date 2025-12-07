@@ -2274,6 +2274,11 @@ def init_headless_state():
     people = spawn_people(maze, TOTAL_PEOPLE, NUM_WARDENS)
     rescue_system = RescueSystem()
 
+    # Seed a small ignition so the sim is active immediately in backend mode.
+    center_r, center_c = ROWS // 2, COLS // 2
+    disasters.add_fire(center_r, center_c)
+    alarm.trigger()
+
     state = {
         'maze': maze,
         'exits': exits,

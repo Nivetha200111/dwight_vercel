@@ -17,6 +17,7 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 from api.state_manager import get_state, reset_state
+from dwight import run_headless_step
 
 
 class handler(BaseHTTPRequestHandler):
@@ -45,9 +46,10 @@ class handler(BaseHTTPRequestHandler):
             reset = bool(payload.get('reset', False))
 
             if reset:
-                reset_state()
+                state = reset_state()
+                snapshot = run_headless_step(state, steps=1, dt=0.033)
                 self._set_headers(200)
-                self.wfile.write(json.dumps({'success': True, 'reset': True}).encode())
+                self.wfile.write(json.dumps({'success': True, 'reset': True, 'snapshot': snapshot}).encode())
                 return
 
             state = get_state()
@@ -57,35 +59,40 @@ class handler(BaseHTTPRequestHandler):
             if action == 'add_fire':
                 if 0 <= row < len(state['maze']) and 0 <= col < len(state['maze'][0]):
                     disasters.add_fire(row, col)
+                    snapshot = run_headless_step(state, steps=5, dt=0.033)
                     self._set_headers(200)
-                    self.wfile.write(json.dumps({'success': True}).encode())
+                    self.wfile.write(json.dumps({'success': True, 'snapshot': snapshot}).encode())
                     return
 
             if action == 'add_bomb':
                 if 0 <= row < len(state['maze']) and 0 <= col < len(state['maze'][0]):
                     disasters.add_bomb(row, col)
+                    snapshot = run_headless_step(state, steps=5, dt=0.033)
                     self._set_headers(200)
-                    self.wfile.write(json.dumps({'success': True}).encode())
+                    self.wfile.write(json.dumps({'success': True, 'snapshot': snapshot}).encode())
                     return
 
             if action == 'add_flood':
                 if 0 <= row < len(state['maze']) and 0 <= col < len(state['maze'][0]):
                     disasters.add_flood(row, col)
+                    snapshot = run_headless_step(state, steps=5, dt=0.033)
                     self._set_headers(200)
-                    self.wfile.write(json.dumps({'success': True}).encode())
+                    self.wfile.write(json.dumps({'success': True, 'snapshot': snapshot}).encode())
                     return
 
             if action == 'add_quake':
                 if 0 <= row < len(state['maze']) and 0 <= col < len(state['maze'][0]):
                     disasters.trigger_quake(row, col)
+                    snapshot = run_headless_step(state, steps=5, dt=0.033)
                     self._set_headers(200)
-                    self.wfile.write(json.dumps({'success': True}).encode())
+                    self.wfile.write(json.dumps({'success': True, 'snapshot': snapshot}).encode())
                     return
 
             if action == 'trigger_alarm':
                 alarm.trigger()
+                snapshot = run_headless_step(state, steps=2, dt=0.033)
                 self._set_headers(200)
-                self.wfile.write(json.dumps({'success': True, 'alarm': True}).encode())
+                self.wfile.write(json.dumps({'success': True, 'alarm': True, 'snapshot': snapshot}).encode())
                 return
 
             # Unsupported action
