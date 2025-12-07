@@ -1157,19 +1157,30 @@ def generate_building():
             interior_candidates = []
             r_mid = (r1 + r2) // 2
             c_mid = (c1 + c2) // 2
+            thirds = [
+                (r1 + (r2 - r1) // 3, c_mid),
+                (r1 + 2 * (r2 - r1) // 3, c_mid),
+                (r_mid, c1 + (c2 - c1) // 3),
+                (r_mid, c1 + 2 * (c2 - c1) // 3),
+            ]
             for ir, ic in [
                 (r_mid, c_mid),
                 (r_mid, c_mid - 2),
                 (r_mid, c_mid + 2),
                 (r_mid - 2, c_mid),
                 (r_mid + 2, c_mid),
+                *thirds,
             ]:
                 if r1 + 1 <= ir <= r2 - 1 and c1 + 1 <= ic <= c2 - 1:
                     if maze[ir][ic] == CARPET:
                         interior_candidates.append((ir, ic))
 
+            # Deduplicate then shuffle to avoid clustering
+            interior_candidates = list(dict.fromkeys(interior_candidates))
             random.shuffle(interior_candidates)
-            for ir, ic in interior_candidates[:2]:
+
+            # Place up to 4 interior doors for better flow
+            for ir, ic in interior_candidates[:4]:
                 maze[ir][ic] = DOOR
 
     sections = [
