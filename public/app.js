@@ -1155,6 +1155,9 @@ function updatePeople(dt) {
         if (person.health <= 0) {
             person.alive = false;
             addChatMessage('death', `Person ${person.id} has perished!`);
+            if (gameState.selectedPersonId === person.id) {
+                setDefaultPOV();
+            }
             return;
         }
 
@@ -1162,6 +1165,9 @@ function updatePeople(dt) {
         if (gameState.maze[person.row]?.[person.col] === TILE.EXIT) {
             person.escaped = true;
             addChatMessage('escape', `Person ${person.id} escaped safely!`);
+            if (gameState.selectedPersonId === person.id) {
+                setDefaultPOV();
+            }
             return;
         }
 
@@ -1570,6 +1576,13 @@ function buildDialogue(person, context) {
     return lines.slice(0, 2).join(' ');
 }
 
+function setDefaultPOV() {
+    const candidate = gameState.people.find(p => p.alive && !p.escaped);
+    if (candidate) {
+        gameState.selectedPersonId = candidate.id;
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // GAME ACTIONS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1662,17 +1675,21 @@ function addSensor(row, col) {
 }
 
 function selectPersonAt(row, col) {
-    const person = gameState.people.find(p =>
-        p.alive && !p.escaped &&
-        Math.abs(p.row - row) <= 0 && Math.abs(p.col - col) <= 0
-    ) || gameState.people.find(p =>
-        p.alive && !p.escaped &&
-        Math.abs(p.row - row) + Math.abs(p.col - col) <= 1
-    );
+    let closest = null;
+    let bestDist = Infinity;
 
-    if (person) {
-        gameState.selectedPersonId = person.id;
-        addChatMessage('system', `POV: Person ${person.id}${person.isWarden ? ' (Warden)' : ''}`);
+    gameState.people.forEach(p => {
+        if (!p.alive || p.escaped) return;
+        const dist = Math.abs(p.row - row) + Math.abs(p.col - col);
+        if (dist < bestDist) {
+            bestDist = dist;
+            closest = p;
+        }
+    });
+
+    if (closest && bestDist <= 3) {
+        gameState.selectedPersonId = closest.id;
+        addChatMessage('system', `POV: Person ${closest.id}${closest.isWarden ? ' (Warden)' : ''}`);
         updatePOVUI();
     }
 }
@@ -1951,6 +1968,7 @@ async function fetchInitialState() {
             gameState.people = data.people;
             gameState.sensors = data.sensors;
             gameState.stats.total = data.config.totalPeople;
+            setDefaultPOV();
             return true;
         }
     } catch (error) {
@@ -2184,6 +2202,8 @@ function generateLocalState() {
         });
         sensorId++;
     }
+
+    setDefaultPOV();
 }
 
 async function initGame() {
@@ -2224,6 +2244,7 @@ async function initGame() {
         document.getElementById('chat-messages').innerHTML = '';
         addChatMessage('system', 'World loaded successfully!');
         addChatMessage('system', 'Use 1-6 to pick Fire/Bomb/Quake/Flood/Sensor/POV, then click');
+        addChatMessage('system', 'POV auto-locks to the first survivor; press 6 and click someone to swap');
 
         gameState.startTime = Date.now();
     }, 2000);
