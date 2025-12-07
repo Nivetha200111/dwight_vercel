@@ -2116,6 +2116,13 @@ function showVictoryScreen() {
     // Update stats
     document.getElementById('victory-escaped').textContent = gameState.stats.escaped;
     document.getElementById('victory-deaths').textContent = gameState.stats.deaths;
+    document.getElementById('victory-critical').textContent = gameState.rescue?.criticalSaves || 0;
+    document.getElementById('victory-prevented').textContent = gameState.rescue?.deathsPrevented || 0;
+    const safeAvg = (gameState.neural?.safePheromone || 0).toFixed(2);
+    const dangerAvg = (gameState.neural?.dangerPheromone || 0).toFixed(2);
+    document.getElementById('victory-pheromone').textContent = `${safeAvg} / ${dangerAvg}`;
+    document.getElementById('victory-rl-decisions').textContent = gameState.rl?.decisions || 0;
+    document.getElementById('victory-coverage').textContent = `${gameState.neural?.coverage || 0}%`;
 
     const elapsed = Math.floor(gameState.time);
     const minutes = Math.floor(elapsed / 60);
